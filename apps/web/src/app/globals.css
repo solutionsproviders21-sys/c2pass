@@ -1,0 +1,38 @@
+@import "tailwindcss";
+
+@theme {
+  --color-navy-950: #071427;
+  --color-navy-900: #0b1f3a;
+  --color-navy-800: #102a4c;
+  --color-navy-700: #18375f;
+  --color-navy-100: #e6edf6;
+  --color-navy-50: #f3f6fb;
+  --color-maple-700: #b3211a;
+  --color-maple-600: #d52b1e;
+  --color-maple-500: #e5463a;
+  --color-maple-50: #fdeeec;
+  --color-gold-500: #e0a526;
+  --color-gold-50: #fdf6e3;
+  --color-ok-600: #1e9e5a;
+  --color-ok-50: #e8f6ee;
+  --color-warn-600: #d97706;
+  --color-warn-50: #fff4e0;
+  --color-ink: #0f172a;
+  --color-muted: #64748b;
+  --color-line: #e2e8f0;
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-serif: "Playfair Display", Georgia, "Times New Roman", serif;
+}
+
+html { color: var(--color-ink); background: #f6f8fb; }
+body { min-height: 100dvh; -webkit-font-smoothing: antialiased; }
+
+.h-serif { font-family: var(--font-serif); letter-spacing: -0.01em; }
+
+/* Exam mode: no text selection, no copy (anti copy-paste, cahier des charges §1.C). */
+.exam-lock { user-select: none; -webkit-user-select: none; }
+.exam-lock textarea { user-select: text; -webkit-user-select: text; }
+
+.prose-c2 p { margin: 0.5rem 0; line-height: 1.65; }
+
+.leaflet-container { font: inherit; border-radius: 0.75rem; }

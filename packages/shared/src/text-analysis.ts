@@ -91,11 +91,15 @@ export function analyseWriting(text: string): WritingMetrics {
   };
 }
 
+/** Highest score the metrics alone may give: they cannot judge accuracy or relevance to the prompt. */
+export const UNCHECKED_SCORE_CAP = 15;
+
 /**
  * Heuristic /20 score from metrics and the number of language errors found by the checker.
- * Used for the "IA base" tier and as the fallback when the LLM is unavailable.
+ * Used for the "IA base" tier and as the fallback when the LLM is unavailable. `errors` is null
+ * when no grammar checker ran: no accuracy bonus is given then, and the score is capped.
  */
-export function heuristicWritingScore(m: WritingMetrics, bounds: { minWords: number; maxWords: number }, errors: number): number {
+export function heuristicWritingScore(m: WritingMetrics, bounds: { minWords: number; maxWords: number }, errors: number | null): number {
   if (m.wordCount < Math.min(20, bounds.minWords)) return Math.min(2, Math.round(m.wordCount / 10));
   let score = 6;
   // Task completion: length within the expected range.
@@ -110,6 +114,7 @@ export function heuristicWritingScore(m: WritingMetrics, bounds: { minWords: num
   // Sentence length sweet spot (12–28 words).
   if (m.avgSentenceLength >= 12 && m.avgSentenceLength <= 28) score += 1;
   // Accuracy: errors per 100 words.
+  if (errors === null) return clamp(Math.round(score), 0, UNCHECKED_SCORE_CAP);
   const density = (errors / Math.max(m.wordCount, 1)) * 100;
   score += density <= 1 ? 1 : density <= 3 ? 0 : density <= 6 ? -2 : -4;
   return clamp(Math.round(score), 0, 20);

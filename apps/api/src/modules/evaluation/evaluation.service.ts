@@ -147,7 +147,7 @@ export class EvaluationService implements OnModuleInit {
       suggestion: i.replacements[0] ?? '',
       message: i.message,
     }));
-    const heuristic = heuristicWritingScore(metrics, input.bounds, issues.length);
+    const heuristic = heuristicWritingScore(metrics, input.bounds, engine.includes('languagetool') ? issues.length : null);
     const base: WritingFeedback = {
       score: heuristic,
       cefr: cefrFromTwenty(heuristic),

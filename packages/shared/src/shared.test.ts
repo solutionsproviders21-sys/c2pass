@@ -51,6 +51,7 @@ describe('writing analysis', () => {
     const bounds = { minWords: 40, maxWords: 180 };
     const a = heuristicWritingScore(analyseWriting(c2), bounds, 0);
     const b = heuristicWritingScore(analyseWriting(basic), bounds, 3);
+    expect(heuristicWritingScore(analyseWriting(c2), bounds, null)).toBeLessThanOrEqual(15);
     expect(a).toBeGreaterThan(b);
     expect(lexicalDiversity(c2)).toBeGreaterThan(lexicalDiversity(basic));
     expect(analyseWriting(c2).complexStructures).toBeGreaterThan(0);

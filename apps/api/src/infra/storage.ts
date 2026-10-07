@@ -1,5 +1,6 @@
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, normalize } from 'node:path';
+import { GetObjectCommand, NoSuchKey, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 
 /** Port for binary files (exam audio, candidate recordings). Local disk in dev, S3/MinIO in production. */
 export interface Storage {
@@ -32,6 +33,35 @@ export class LocalStorage implements Storage {
     }
     const contentType = await readFile(`${p}.type`, 'utf8').catch(() => 'application/octet-stream');
     return { data: await readFile(p), contentType };
+  }
+}
+
+/** S3-compatible object storage (AWS S3, MinIO, Cloudflare R2). Objects stay private. */
+export class S3Storage implements Storage {
+  private readonly client: S3Client;
+
+  constructor(private readonly bucket: string, opts: { endpoint?: string; region: string; accessKeyId?: string; secretAccessKey?: string }) {
+    this.client = new S3Client({
+      region: opts.region,
+      endpoint: opts.endpoint,
+      forcePathStyle: !!opts.endpoint, // MinIO
+      credentials: opts.accessKeyId && opts.secretAccessKey ? { accessKeyId: opts.accessKeyId, secretAccessKey: opts.secretAccessKey } : undefined,
+    });
+  }
+
+  async put(key: string, data: Buffer, contentType: string) {
+    await this.client.send(new PutObjectCommand({ Bucket: this.bucket, Key: key, Body: data, ContentType: contentType, ServerSideEncryption: 'AES256' }));
+  }
+
+  async get(key: string) {
+    try {
+      const res = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }));
+      const bytes = await res.Body!.transformToByteArray();
+      return { data: Buffer.from(bytes), contentType: res.ContentType ?? 'application/octet-stream' };
+    } catch (e) {
+      if (e instanceof NoSuchKey || (e as { name?: string }).name === 'NoSuchKey') return null;
+      throw e;
+    }
   }
 }
 

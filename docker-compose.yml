@@ -1,0 +1,79 @@
+# C2Pass : stack complète (cahier des charges §5). Lancer : docker compose up -d --build
+# puis, une seule fois : docker compose exec api node dist/db/seed.js
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: c2pass
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-c2pass}
+      POSTGRES_DB: c2pass_tcf
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U c2pass -d c2pass_tcf"]
+      interval: 5s
+      retries: 10
+
+  mongo:
+    image: mongo:7
+    volumes: [mongodata:/data/db]
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: [redisdata:/data]
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address :9001
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY_ID:-c2pass}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_ACCESS_KEY:-c2pass-minio-secret}
+    volumes: [miniodata:/data]
+    ports: ["9001:9001"]
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on: [minio]
+    entrypoint: >
+      /bin/sh -c "until mc alias set local http://minio:9000 $${MINIO_USER} $${MINIO_PASSWORD}; do sleep 2; done;
+      mc mb --ignore-existing local/c2pass-media; mc anonymous set none local/c2pass-media"
+    environment:
+      MINIO_USER: ${S3_ACCESS_KEY_ID:-c2pass}
+      MINIO_PASSWORD: ${S3_SECRET_ACCESS_KEY:-c2pass-minio-secret}
+
+  api:
+    build: { context: ., dockerfile: apps/api/Dockerfile }
+    env_file: [.env]
+    environment:
+      DATABASE_URL: postgres://c2pass:${POSTGRES_PASSWORD:-c2pass}@postgres:5432/c2pass_tcf
+      MONGO_URL: mongodb://mongo:27017
+      REDIS_URL: redis://redis:6379
+      S3_BUCKET: c2pass-media
+      S3_ENDPOINT: http://minio:9000
+      S3_REGION: us-east-1
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-c2pass}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-c2pass-minio-secret}
+    depends_on:
+      postgres: { condition: service_healthy }
+      mongo: { condition: service_healthy }
+      redis: { condition: service_started }
+      minio-init: { condition: service_completed_successfully }
+    ports: ["4000:4000"]
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args: { API_URL: http://api:4000 }
+    depends_on: [api]
+    ports: ["3000:3000"]
+
+volumes:
+  pgdata:
+  mongodata:
+  redisdata:
+  miniodata:
