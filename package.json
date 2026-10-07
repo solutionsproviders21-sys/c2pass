@@ -1,0 +1,13 @@
+{
+  "name": "c2pass",
+  "private": true,
+  "workspaces": ["packages/*", "apps/*"],
+  "scripts": {
+    "build": "npm run build -w @c2pass/shared && npm run build -w @c2pass/api && npm run build -w @c2pass/web",
+    "test": "npm test -w @c2pass/shared && npm test -w @c2pass/api",
+    "typecheck": "npm run build -w @c2pass/shared && npm run typecheck --workspaces --if-present",
+    "db:migrate": "npm run db:migrate -w @c2pass/api",
+    "db:seed": "npm run db:seed -w @c2pass/api"
+  },
+  "engines": { "node": ">=22" }
+}

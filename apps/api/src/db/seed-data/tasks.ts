@@ -1,0 +1,25 @@
+import type { SeedTask } from './types.js';
+
+/** Expression écrite et orale — three complete sets of the three TCF Canada tasks each. */
+export const TASKS: SeedTask[] = [
+  // ----- Expression écrite -----
+  { skill: 'EE', set: 1, task: 1, level: 'A2', theme: 'Message', statement: 'Vous venez d’emménager dans un nouveau quartier. Écrivez un message à un ami pour lui décrire votre logement et l’inviter à vous rendre visite (60 à 120 mots).' },
+  { skill: 'EE', set: 1, task: 2, level: 'B2', theme: 'Article', statement: 'Vous avez participé à un événement culturel dans votre ville. Rédigez un article pour le blog de votre association : racontez l’événement et donnez votre avis (120 à 150 mots).' },
+  { skill: 'EE', set: 1, task: 3, level: 'C2', theme: 'Télétravail', context: 'Document 1 : « Le télétravail libère du temps et réduit la fatigue des trajets. » Document 2 : « Sans contacts quotidiens, l’esprit d’équipe s’effrite. »', statement: 'Le télétravail généralisé risque-t-il de détruire le lien social au sein des entreprises ? Rédigez un texte argumenté d’au moins 120 mots en vous appuyant sur les deux documents (120 à 180 mots).' },
+  { skill: 'EE', set: 2, task: 1, level: 'A2', theme: 'Message', statement: 'Vous ne pouvez pas assister à l’anniversaire d’une collègue. Écrivez-lui un message pour vous excuser, expliquer pourquoi et proposer une autre rencontre (60 à 120 mots).' },
+  { skill: 'EE', set: 2, task: 2, level: 'B2', theme: 'Compte rendu', statement: 'Le centre de formation où vous apprenez le français a changé ses horaires. Écrivez au responsable pour décrire les conséquences pour les apprenants et proposer une solution (120 à 150 mots).' },
+  { skill: 'EE', set: 2, task: 3, level: 'C2', theme: 'Réseaux sociaux', context: 'Document 1 : « Les réseaux sociaux ont démocratisé la prise de parole. » Document 2 : « Ils enferment chacun dans une bulle d’opinions identiques. »', statement: 'Les réseaux sociaux favorisent-ils ou appauvrissent-ils le débat démocratique ? Comparez les deux points de vue et donnez votre position (120 à 180 mots).' },
+  { skill: 'EE', set: 3, task: 1, level: 'A2', theme: 'Message', statement: 'Vous organisez une sortie avec des amis le week-end prochain. Écrivez un message pour proposer l’activité, le lieu et l’heure du rendez-vous (60 à 120 mots).' },
+  { skill: 'EE', set: 3, task: 2, level: 'B2', theme: 'Témoignage', statement: 'Un magazine recueille des témoignages sur l’apprentissage d’une langue étrangère. Racontez votre expérience, vos difficultés et ce qui vous a aidé (120 à 150 mots).' },
+  { skill: 'EE', set: 3, task: 3, level: 'C2', theme: 'Immigration qualifiée', context: 'Document 1 : « L’immigration qualifiée comble les pénuries de main-d’œuvre des pays d’accueil. » Document 2 : « Le départ des diplômés appauvrit durablement les pays d’origine. »', statement: 'L’immigration des personnes qualifiées est-elle une chance ou une perte ? Confrontez les deux documents et exposez votre point de vue (120 à 180 mots).' },
+  // ----- Expression orale -----
+  { skill: 'EO', set: 1, task: 1, level: 'A2', theme: 'Entretien', statement: 'Présentez-vous : parlez de votre parcours, de votre travail ou de vos études, et de vos loisirs (2 minutes).' },
+  { skill: 'EO', set: 1, task: 2, level: 'B1', theme: 'Interaction', statement: 'Vous souhaitez vous inscrire dans une salle de sport. Posez des questions à l’employé pour obtenir des informations sur les horaires, les tarifs et les cours proposés (préparation 2 min, puis 3 min 30).' },
+  { skill: 'EO', set: 1, task: 3, level: 'C2', theme: 'Point de vue', statement: '« Apprendre une langue, c’est apprendre une autre manière de penser. » Qu’en pensez-vous ? Argumentez de façon nuancée (4 min 30).' },
+  { skill: 'EO', set: 2, task: 1, level: 'A2', theme: 'Entretien', statement: 'Parlez de votre ville : où se trouve-t-elle, qu’aimez-vous y faire et que conseilleriez-vous à un visiteur ? (2 minutes)' },
+  { skill: 'EO', set: 2, task: 2, level: 'B1', theme: 'Interaction', statement: 'Vous cherchez un logement à louer. Interrogez le propriétaire sur l’appartement, le loyer, les charges et le quartier (préparation 2 min, puis 3 min 30).' },
+  { skill: 'EO', set: 2, task: 3, level: 'C2', theme: 'Point de vue', statement: '« Le progrès technique rend-il l’humanité plus heureuse ? » Présentez votre opinion en l’illustrant d’exemples (4 min 30).' },
+  { skill: 'EO', set: 3, task: 1, level: 'A2', theme: 'Entretien', statement: 'Décrivez une journée habituelle de votre semaine, du matin au soir (2 minutes).' },
+  { skill: 'EO', set: 3, task: 2, level: 'B1', theme: 'Interaction', statement: 'Vous voulez organiser un voyage de groupe. Posez des questions à une agence de voyages sur les destinations, les prix et les conditions d’annulation (préparation 2 min, puis 3 min 30).' },
+  { skill: 'EO', set: 3, task: 3, level: 'C2', theme: 'Point de vue', statement: '« Faut-il rendre le bénévolat obligatoire pour les jeunes ? » Exposez et défendez votre position de manière argumentée (4 min 30).' },
+];
