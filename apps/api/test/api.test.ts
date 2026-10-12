@@ -56,6 +56,31 @@ describe('authentication', () => {
     expect(verified.status).toBe(200);
   });
 
+  it('resets a forgotten password through a single-use email link', async () => {
+    const s = await newStudent(ctx);
+    ctx.notifier.sent.length = 0;
+    // Unknown addresses get the same answer and no email.
+    await ctx.http.post('/api/auth/password/forgot').send({ email: 'personne@inconnu.cm' }).expect(204);
+    expect(ctx.notifier.sent).toHaveLength(0);
+
+    await ctx.http.post('/api/auth/password/forgot').send({ email: s.email.toUpperCase() }).expect(204);
+    const mail = ctx.notifier.sent.find((m) => m.channel === 'email' && m.to.toLowerCase() === s.email);
+    expect(mail?.url).toMatch(/\/mot-de-passe\/nouveau\?jeton=/);
+    const token = new URL(mail!.url!).searchParams.get('jeton')!;
+
+    await ctx.http.post('/api/auth/password/reset').send({ token, password: 'court' }).expect(400);
+    await ctx.http.post('/api/auth/password/reset').send({ token, password: 'NouveauSecret42' }).expect(204);
+    // Single use, old password and old sessions no longer work.
+    await ctx.http.post('/api/auth/password/reset').send({ token, password: 'EncoreUnAutre42' }).expect(400);
+    await ctx.http.post('/api/auth/login').send({ email: s.email, password: 'MotDePasse123' }).expect(401);
+    await ctx.http.post('/api/auth/refresh').send({ refreshToken: s.refreshToken }).expect(401);
+    await ctx.http.post('/api/auth/login').send({ email: s.email, password: 'NouveauSecret42' }).expect(200);
+
+    // At most 3 emails per hour per account.
+    for (let i = 0; i < 4; i++) await ctx.http.post('/api/auth/password/forgot').send({ email: s.email }).expect(204);
+    expect(ctx.notifier.sent.filter((m) => m.to.toLowerCase() === s.email)).toHaveLength(3);
+  });
+
   it('protects admin routes', async () => {
     const s = await newStudent(ctx);
     expect((await ctx.http.get('/api/admin/stats').set(auth(s.token))).status).toBe(403);

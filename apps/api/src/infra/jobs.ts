@@ -1,5 +1,6 @@
 import { Logger } from '@nestjs/common';
-import { Queue, Worker, type ConnectionOptions } from 'bullmq';
+import { Queue, Worker } from 'bullmq';
+import { Redis } from 'ioredis';
 
 export type JobHandler = (data: any) => Promise<void>;
 
@@ -48,11 +49,11 @@ export class BullJobs implements Jobs {
   private readonly queue: Queue;
   private readonly handlers = new Map<string, JobHandler>();
   private worker: Worker | null = null;
-  private readonly connection: ConnectionOptions;
+  private readonly connection: Redis;
 
+  // BullMQ runs as native ESM here, so it needs a ready-made ioredis client rather than connection options.
   constructor(redisUrl: string, private readonly runWorker: boolean) {
-    const u = new URL(redisUrl);
-    this.connection = { host: u.hostname, port: Number(u.port || 6379), password: u.password || undefined, maxRetriesPerRequest: null };
+    this.connection = new Redis(redisUrl, { maxRetriesPerRequest: null });
     this.queue = new Queue(QUEUE, { connection: this.connection });
   }
 
@@ -88,6 +89,7 @@ export class BullJobs implements Jobs {
   async close() {
     await this.worker?.close();
     await this.queue.close();
+    this.connection.disconnect();
   }
 }
 

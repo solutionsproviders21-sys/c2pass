@@ -15,7 +15,7 @@ export function configureApp(app: INestApplication, config: Config) {
   app.use(cookieParser());
   app.enableCors({ origin: config.CORS_ORIGINS.split(',').map((o) => o.trim()), credentials: true });
   if (config.NODE_ENV !== 'test') {
-    app.use(['/api/auth/login', '/api/auth/register', '/api/auth/totp'], rateLimit({ windowMs: 15 * 60_000, limit: 30, standardHeaders: 'draft-8', legacyHeaders: false }));
+    app.use(['/api/auth/login', '/api/auth/register', '/api/auth/totp', '/api/auth/password/forgot', '/api/auth/password/reset'], rateLimit({ windowMs: 15 * 60_000, limit: 30, standardHeaders: 'draft-8', legacyHeaders: false }));
     app.use('/api/leads', rateLimit({ windowMs: 60 * 60_000, limit: 20 }));
   }
 }

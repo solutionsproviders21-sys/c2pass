@@ -9,3 +9,5 @@ storage/
 next-env.d.ts
 *.tsbuildinfo
 storage-test/
+dump.rdb
+state.json

@@ -7,9 +7,13 @@ import { CONFIG, type Config } from '../../config.js';
 import { audit } from '../../infra/audit.js';
 import { Cipher, newTotpSecret, otpauthUrl, randomToken, sha256, verifyTotp } from '../../infra/crypto.js';
 import { withTransaction, type Queryable } from '../../infra/database.js';
+import { NOTIFIER, type Notifier } from '../../infra/notifier.js';
 import { PG } from '../../infra/tokens.js';
 
 const REFRESH_TTL_DAYS = 30;
+const RESET_TTL_MINUTES = 60;
+/** Reset emails per account per hour, so the form cannot be used to flood an inbox. */
+const RESETS_PER_HOUR = 3;
 
 export interface Tokens {
   accessToken: string;
@@ -43,6 +47,7 @@ export class AuthService {
     @Inject(PG) private readonly pool: pg.Pool,
     @Inject(CONFIG) private readonly config: Config,
     @Inject(Cipher) private readonly cipher: Cipher,
+    @Inject(NOTIFIER) private readonly notifier: Notifier,
   ) {}
 
   async register(input: RegisterInput, fp: Fingerprint): Promise<Tokens> {
@@ -138,6 +143,52 @@ export class AuthService {
     if (u.password_hash && (!current || !(await argon2.verify(u.password_hash, current)))) throw badRequest('wrong_password', 'Mot de passe actuel incorrect');
     await this.pool.query('UPDATE users SET password_hash = $2 WHERE id = $1', [userId, await argon2.hash(next, { type: argon2.argon2id })]);
     await this.pool.query('UPDATE refresh_tokens SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL', [userId]);
+  }
+
+  /**
+   * Sends a single-use reset link. Answers the same way whether or not the address exists,
+   * so the form cannot be used to discover who has an account.
+   */
+  async requestPasswordReset(email: string, ip: string | null) {
+    const { rows: [u] } = await this.pool.query<{ id: string; first_name: string | null }>(
+      `SELECT u.id, p.first_name FROM users u LEFT JOIN profiles p ON p.user_id = u.id
+        WHERE lower(u.email) = lower($1) AND u.status = 'active'`,
+      [email],
+    );
+    if (!u) return;
+    const { rows: [{ n }] } = await this.pool.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM password_resets WHERE user_id = $1 AND created_at > now() - interval '1 hour'`, [u.id]);
+    if (n >= RESETS_PER_HOUR) return;
+    const token = randomToken(32);
+    await this.pool.query(
+      `INSERT INTO password_resets (user_id, token_hash, expires_at) VALUES ($1, $2, now() + make_interval(mins => $3))`,
+      [u.id, sha256(token), RESET_TTL_MINUTES],
+    );
+    await audit(this.pool, { userId: u.id, actorId: null, action: 'password.reset_requested', ip });
+    await this.notifier.send({
+      channel: 'email',
+      to: email,
+      subject: 'C2Pass : réinitialisation de votre mot de passe',
+      text: `Bonjour${u.first_name ? ` ${u.first_name}` : ''},\n\nPour choisir un nouveau mot de passe, ouvrez ce lien (valable ${RESET_TTL_MINUTES} minutes, utilisable une seule fois). Si vous n’êtes pas à l’origine de cette demande, ignorez ce message : votre mot de passe actuel reste valable.`,
+      url: `${this.config.PUBLIC_WEB_URL}/mot-de-passe/nouveau?jeton=${token}`,
+    });
+  }
+
+  /** Consumes a reset link: sets the new password and signs every device out. */
+  async resetPassword(token: string, password: string, ip: string | null) {
+    const hash = await argon2.hash(password, { type: argon2.argon2id });
+    await withTransaction(this.pool, async (tx) => {
+      const { rows: [r] } = await tx.query<{ user_id: string }>(
+        `UPDATE password_resets SET used_at = now()
+          WHERE token_hash = $1 AND used_at IS NULL AND expires_at > now() RETURNING user_id`,
+        [sha256(token)],
+      );
+      if (!r) throw badRequest('reset_link_invalid', 'Ce lien a expiré ou a déjà été utilisé. Demandez-en un nouveau.');
+      await tx.query(`UPDATE users SET password_hash = $2 WHERE id = $1 AND status = 'active'`, [r.user_id, hash]);
+      await tx.query(`UPDATE password_resets SET used_at = now() WHERE user_id = $1 AND used_at IS NULL`, [r.user_id]);
+      await tx.query('UPDATE refresh_tokens SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL', [r.user_id]);
+      await audit(tx, { userId: r.user_id, actorId: r.user_id, action: 'password.reset', ip });
+    });
   }
 
   /** Finds or creates the account behind an OAuth identity, linking by verified email. */

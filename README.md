@@ -64,7 +64,7 @@ Les moyens de paiement sont Orange Money (Web Payment), MTN MoMo (Collection) et
 
 ## Sécurité et RGPD
 
-- **Mots de passe** : hachés avec Argon2id.
+- **Mots de passe** : hachés avec Argon2id. Un mot de passe oublié se réinitialise par un lien reçu par e-mail, valable 60 minutes et utilisable une seule fois ; la réinitialisation ferme toutes les sessions ouvertes.
 - **Sessions** : JWT valable 1 heure, avec rotation des jetons de rafraîchissement.
 - **Comptes administrateurs** : la double authentification (TOTP) est obligatoire. Elle est facultative pour les autres comptes.
 - **Anti-fraude** : empreinte du navigateur à la connexion et au début de chaque examen, et détection des appareils utilisés par plusieurs comptes.
@@ -77,7 +77,7 @@ Les moyens de paiement sont Orange Money (Web Payment), MTN MoMo (Collection) et
 ```
 packages/shared   règles TCF (barèmes, CECRL, NCLC), offres, analyse de texte : partagées par l’API et le site
 apps/api          NestJS : PostgreSQL (comptes, sessions, centres, paiements), MongoDB (questions, copies, audio),
-                  Redis + BullMQ (correction IA, veille, envoi des alertes), S3/MinIO (fichiers audio)
+                  Redis + BullMQ (correction IA, veille, envoi des alertes), stockage S3 (fichiers audio)
 apps/web          Next.js (App Router) + Tailwind CSS
 ```
 
@@ -86,12 +86,16 @@ apps/web          Next.js (App Router) + Tailwind CSS
 ### Avec Docker (recommandé)
 
 ```bash
-cp .env.example .env               # renseigner JWT_SECRET, VAULT_KEY, POSTGRES_PASSWORD, S3_SECRET_ACCESS_KEY
+cp .env.example .env               # renseigner JWT_SECRET, VAULT_KEY, POSTGRES_PASSWORD, S3_SECRET_ACCESS_KEY, S3_SSE_KEY
 docker compose up -d --build
 docker compose exec api node dist/db/seed.js   # contenu de démonstration (une seule fois)
 ```
 
 Le site est alors sur http://localhost:3000 et l’API sur http://localhost:4000/api/health.
+
+La pile complète (PostgreSQL, MongoDB, Redis, stockage S3 SeaweedFS, API, site) a été lancée ainsi et le parcours complet a été testé dans un navigateur : inscription, entraînement, simulation, paiement, alertes, back-office, enregistrement oral stocké dans S3. Les images MinIO n’étant plus publiées sur Docker Hub, le stockage S3 local utilise SeaweedFS. En production, on peut aussi pointer `S3_ENDPOINT` vers AWS S3 ou Cloudflare R2.
+
+Derrière un proxy d’entreprise qui intercepte le HTTPS, `npm ci` échoue pendant la construction des images : il faut ajouter le certificat du proxy aux images (`NODE_EXTRA_CA_CERTS`).
 
 ### En développement
 
@@ -106,6 +110,8 @@ npm run dev -w @c2pass/api         # :4000
 npm run dev -w @c2pass/web         # :3000
 npm test                           # tests de l’API et de la logique TCF
 ```
+
+L’intégration continue (`.github/workflows/ci.yml`) lance à chaque push la vérification des types, les tests et la construction, puis construit les images Docker.
 
 ### Comptes de démonstration
 

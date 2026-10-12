@@ -2,7 +2,7 @@ import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, normalize } from 'node:path';
 import { GetObjectCommand, NoSuchKey, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 
-/** Port for binary files (exam audio, candidate recordings). Local disk in dev, S3/MinIO in production. */
+/** Port for binary files (exam audio, candidate recordings). Local disk in dev, S3-compatible storage in production. */
 export interface Storage {
   put(key: string, data: Buffer, contentType: string): Promise<void>;
   get(key: string): Promise<{ data: Buffer; contentType: string } | null>;
@@ -36,7 +36,7 @@ export class LocalStorage implements Storage {
   }
 }
 
-/** S3-compatible object storage (AWS S3, MinIO, Cloudflare R2). Objects stay private. */
+/** S3-compatible object storage (AWS S3, SeaweedFS, Cloudflare R2). Objects stay private. */
 export class S3Storage implements Storage {
   private readonly client: S3Client;
 
@@ -44,7 +44,7 @@ export class S3Storage implements Storage {
     this.client = new S3Client({
       region: opts.region,
       endpoint: opts.endpoint,
-      forcePathStyle: !!opts.endpoint, // MinIO
+      forcePathStyle: !!opts.endpoint, // self-hosted S3
       credentials: opts.accessKeyId && opts.secretAccessKey ? { accessKeyId: opts.accessKeyId, secretAccessKey: opts.secretAccessKey } : undefined,
     });
   }

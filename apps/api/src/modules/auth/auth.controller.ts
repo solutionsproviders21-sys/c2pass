@@ -83,6 +83,22 @@ export class AuthController {
   }
 
   @Public()
+  @Post('password/forgot')
+  @HttpCode(204)
+  async forgotPassword(@Body() body: unknown, @Req() req: Request) {
+    const { email } = z.object({ email: z.email() }).parse(body);
+    await this.auth.requestPasswordReset(email, clientIp(req));
+  }
+
+  @Public()
+  @Post('password/reset')
+  @HttpCode(204)
+  async resetPassword(@Body() body: unknown, @Req() req: Request) {
+    const b = z.object({ token: z.string().regex(/^[A-Za-z0-9_-]{20,128}$/), password }).parse(body);
+    await this.auth.resetPassword(b.token, b.password, clientIp(req));
+  }
+
+  @Public()
   @Get('providers')
   providers() {
     return { oauth: this.oauth.enabled() };
