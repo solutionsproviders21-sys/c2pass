@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Headers, HttpCode, Inject, Logger, Param, Post, Req } from '@nestjs/common';
 import { PLAN_IDS, PLANS } from '@c2pass/shared';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import type { Request } from 'express';
 import { z } from 'zod';
 import { CurrentUser, Public, type AuthUser } from '../../common/auth.js';
@@ -69,7 +70,7 @@ export class BillingController {
     if (!payment?.provider_ref) throw badRequest('unknown_payment', 'Unknown payment');
     const status = this.config.PAYMENTS_MODE === 'live'
       ? await this.billing.gateways.mtn_momo.status(payment.provider_ref)
-      : secret === this.config.PAYMENTS_WEBHOOK_SECRET ? ((body as { status?: string }).status === 'FAILED' ? 'failed' : 'succeeded') : 'pending';
+      : sameSecret(secret, this.config.PAYMENTS_WEBHOOK_SECRET) ? ((body as { status?: string }).status === 'FAILED' ? 'failed' : 'succeeded') : 'pending';
     await this.billing.settle(payment.id, status);
     return { received: true };
   }
@@ -82,12 +83,32 @@ export class BillingController {
     const gateway = this.billing.gateways.stripe;
     if (!(gateway instanceof StripeGateway) || !this.config.STRIPE_WEBHOOK_SECRET) throw badRequest('stripe_disabled', 'Stripe is not configured');
     if (!signature || !req.rawBody) throw unauthorized('Missing signature');
-    const event = gateway.stripe.webhooks.constructEvent(req.rawBody, signature, this.config.STRIPE_WEBHOOK_SECRET);
-    if (event.type === 'checkout.session.completed' || event.type === 'checkout.session.expired') {
-      const session = event.data.object;
-      const payment = await this.billing.byProviderRef('stripe', session.id);
-      if (payment) await this.billing.settle(payment.id, session.payment_status === 'paid' ? 'succeeded' : 'failed');
+    let event;
+    try {
+      event = gateway.stripe.webhooks.constructEvent(req.rawBody, signature, this.config.STRIPE_WEBHOOK_SECRET);
+    } catch {
+      throw badRequest('invalid_signature', 'Invalid Stripe signature');
+    }
+    switch (event.type) {
+      // Delayed methods (bank transfer…) complete unpaid first, then send async_payment_succeeded/failed.
+      case 'checkout.session.completed':
+      case 'checkout.session.async_payment_succeeded':
+      case 'checkout.session.async_payment_failed':
+      case 'checkout.session.expired': {
+        const session = event.data.object;
+        const payment = await this.billing.byProviderRef('stripe', session.id);
+        const status = session.payment_status === 'paid' ? 'succeeded'
+          : event.type === 'checkout.session.async_payment_failed' || event.type === 'checkout.session.expired' ? 'failed' : 'pending';
+        if (payment) await this.billing.settle(payment.id, status);
+      }
     }
     return { received: true };
   }
+}
+
+/** Constant-time comparison; an unset secret never matches. */
+function sameSecret(given: string | undefined, expected: string | undefined) {
+  if (!given || !expected) return false;
+  const h = (v: string) => createHash('sha256').update(v).digest();
+  return timingSafeEqual(h(given), h(expected));
 }

@@ -18,6 +18,8 @@ ENV NODE_ENV=production PORT=3000 HOSTNAME=0.0.0.0 NEXT_TELEMETRY_DISABLED=1
 WORKDIR /app
 COPY --from=build /app/apps/web/.next/standalone ./
 COPY --from=build /app/apps/web/.next/static apps/web/.next/static
+# Icons and service worker are not part of the standalone output.
+COPY --from=build /app/apps/web/public apps/web/public
 USER node
 EXPOSE 3000
 CMD ["node", "apps/web/server.js"]

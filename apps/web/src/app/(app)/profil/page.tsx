@@ -162,6 +162,7 @@ function Security({ me, onChanged }: { me: Me; onChanged: () => Promise<unknown>
   const [pwOk, setPwOk] = useState(false);
   const [enrol, setEnrol] = useState<{ challengeId: string; secret: string; otpauthUrl: string } | null>(null);
   const [code, setCode] = useState('');
+  const [totpPassword, setTotpPassword] = useState('');
   const pw = useAction();
   const totp = useAction();
 
@@ -193,10 +194,16 @@ function Security({ me, onChanged }: { me: Me; onChanged: () => Promise<unknown>
             <Button type="submit" busy={totp.busy}>Activer</Button>
           </form>
         ) : (
-          <div className="mt-2">
+          <form className="mt-2 space-y-3" onSubmit={async (e) => {
+            e.preventDefault();
+            const r = await totp.run(() => api.post<{ challengeId: string; secret: string; otpauthUrl: string }>('/auth/totp/setup', { password: me.hasPassword ? totpPassword : undefined }));
+            if (r) { setEnrol(r); setTotpPassword(''); }
+          }}>
             <p className="text-sm text-muted">Protégez votre compte avec une application d’authentification.</p>
-            <Button className="mt-2" size="sm" variant="secondary" busy={totp.busy} onClick={async () => { const r = await totp.run(() => api.post<{ challengeId: string; secret: string; otpauthUrl: string }>('/auth/totp/setup')); if (r) setEnrol(r); }}>Activer la double authentification</Button>
-          </div>
+            {me.hasPassword && <Field label="Confirmez votre mot de passe"><Input type="password" value={totpPassword} onChange={(e) => setTotpPassword(e.target.value)} required autoComplete="current-password" /></Field>}
+            <ErrorNotice error={totp.error} />
+            <Button type="submit" size="sm" variant="secondary" busy={totp.busy}>Activer la double authentification</Button>
+          </form>
         )}
         {(me.google || me.facebook) && <p className="mt-3 text-xs text-muted">Comptes liés : {[me.google && 'Google', me.facebook && 'Facebook'].filter(Boolean).join(', ')}</p>}
       </div>

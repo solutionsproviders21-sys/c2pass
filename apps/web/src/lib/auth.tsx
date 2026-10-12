@@ -1,12 +1,14 @@
 'use client';
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { api, getSession, onSessionChange, setSession } from './api';
+import { api, ApiError, getSession, onSessionChange, setSession } from './api';
 import type { Me, Tokens } from './types';
 
 interface AuthState {
   me: Me | null;
   loading: boolean;
+  /** The profile could not be loaded because the network is down (the session itself is kept). */
+  offline: boolean;
   signIn: (tokens: Tokens) => Promise<Me | null>;
   signOut: () => Promise<void>;
   reload: () => Promise<Me | null>;
@@ -17,6 +19,7 @@ const AuthContext = createContext<AuthState | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [me, setMe] = useState<Me | null>(null);
   const [loading, setLoading] = useState(true);
+  const [offline, setOffline] = useState(false);
 
   const reload = useCallback(async () => {
     if (!getSession()) {
@@ -27,9 +30,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const m = await api.get<Me>('/me');
       setMe(m);
+      setOffline(false);
       return m;
-    } catch {
-      setMe(null);
+    } catch (e) {
+      // A refused session signs out; a lost connection does not.
+      if (e instanceof ApiError) setMe(null);
+      else setOffline(true);
       return null;
     } finally {
       setLoading(false);
@@ -38,9 +44,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     void reload();
-    return onSessionChange((s) => {
+    const back = () => void reload();
+    window.addEventListener('online', back);
+    const off = onSessionChange((s) => {
       if (!s) setMe(null);
     });
+    return () => {
+      window.removeEventListener('online', back);
+      off();
+    };
   }, [reload]);
 
   const signIn = useCallback(async (tokens: Tokens) => {
@@ -55,7 +67,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setMe(null);
   }, []);
 
-  const value = useMemo(() => ({ me, loading, signIn, signOut, reload }), [me, loading, signIn, signOut, reload]);
+  const value = useMemo(() => ({ me, loading, offline, signIn, signOut, reload }), [me, loading, offline, signIn, signOut, reload]);
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 

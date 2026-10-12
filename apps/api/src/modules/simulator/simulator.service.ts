@@ -252,7 +252,9 @@ export class SimulatorService implements OnModuleInit {
       totalScore: session.total_score,
       startedAt: session.started_at,
       completedAt: session.completed_at,
-      review: Object.fromEntries(session.skills.map((skill) => [skill, session.items[skill].map((qid) => {
+      // An abandoned simulation only reveals the sections that were finished: otherwise starting and
+      // abandoning a session would hand out the answer key of the question bank.
+      review: Object.fromEntries(session.skills.filter((_, i) => session.status !== 'abandoned' || i < session.section_index).map((skill) => [skill, session.items[skill].map((qid) => {
         const q = questions.get(qid);
         const a = answers.find((x) => x.question_id === qid);
         if (skill === 'CO' || skill === 'CE') {

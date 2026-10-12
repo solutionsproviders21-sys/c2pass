@@ -114,17 +114,34 @@ export class AuthService {
     });
   }
 
-  /** Optional TOTP enrolment for students and teachers. */
-  async startTotpEnrolment(userId: string, email: string) {
+  /**
+   * Optional TOTP enrolment for students and teachers. Needs the password (a stolen access token alone must not
+   * be enough to attach the attacker's authenticator) and never replaces an active second factor.
+   */
+  async startTotpEnrolment(userId: string, email: string, password?: string) {
+    const { rows: [u] } = await this.pool.query<{ password_hash: string | null; totp_enabled: boolean }>('SELECT password_hash, totp_enabled FROM users WHERE id = $1', [userId]);
+    if (u.totp_enabled) throw conflict('totp_already_enabled', 'La double authentification est déjà active sur ce compte.');
+    if (u.password_hash && (!password || !(await argon2.verify(u.password_hash, password)))) throw badRequest('wrong_password', 'Mot de passe incorrect');
     const secret = newTotpSecret();
     const challengeId = await this.createChallenge(userId, { setup: this.cipher.seal(secret, userId) });
     return { challengeId, secret, otpauthUrl: otpauthUrl(secret, email) };
   }
 
   async refresh(refreshToken: string): Promise<Tokens> {
+    // A token already rotated a while ago coming back means it was copied: every session of that user is closed.
+    // (The short grace period covers two tabs refreshing at the same moment.)
+    const { rows: [reused] } = await this.pool.query<{ user_id: string }>(
+      `SELECT user_id FROM refresh_tokens WHERE token_hash = $1 AND rotated AND revoked_at < now() - interval '30 seconds'`,
+      [sha256(refreshToken)],
+    );
+    if (reused) {
+      await this.pool.query('UPDATE refresh_tokens SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL', [reused.user_id]);
+      await audit(this.pool, { userId: reused.user_id, action: 'refresh_token.reused' });
+      throw unauthorized('Session expirée');
+    }
     return withTransaction(this.pool, async (tx) => {
       const { rows: [row] } = await tx.query<{ id: string; user_id: string; role: Role; status: string }>(
-        `UPDATE refresh_tokens rt SET revoked_at = now() FROM users u
+        `UPDATE refresh_tokens rt SET revoked_at = now(), rotated = true FROM users u
           WHERE rt.token_hash = $1 AND rt.revoked_at IS NULL AND rt.expires_at > now() AND u.id = rt.user_id
           RETURNING rt.id, rt.user_id, u.role, u.status`,
         [sha256(refreshToken)],
@@ -197,10 +214,22 @@ export class AuthService {
     return withTransaction(this.pool, async (tx) => {
       let { rows: [user] } = await tx.query<{ id: string; role: Role; status: string }>(`SELECT id, role, status FROM users WHERE ${column} = $1`, [identity.id]);
       if (!user) {
-        ({ rows: [user] } = await tx.query(
-          `UPDATE users SET ${column} = $2 WHERE lower(email) = lower($1) AND status <> 'deleted' RETURNING id, role, status`,
-          [identity.email, identity.id],
-        ));
+        // Registration does not prove ownership of the address, the provider does. When the account was only ever
+        // used with a password, whoever created it may not own the mailbox (pre-registration hijack): the password,
+        // the second factor and the open sessions are dropped, and the owner can set a new password from the profile.
+        const { rows: [prior] } = await tx.query<{ id: string; unproven: boolean }>(
+          `SELECT id, (google_id IS NULL AND facebook_id IS NULL AND password_hash IS NOT NULL) AS unproven
+             FROM users WHERE lower(email) = lower($1) AND status <> 'deleted' FOR UPDATE`,
+          [identity.email],
+        );
+        if (prior?.unproven) {
+          await tx.query('UPDATE users SET password_hash = NULL, totp_secret = NULL, totp_enabled = false WHERE id = $1', [prior.id]);
+          await tx.query('UPDATE refresh_tokens SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL', [prior.id]);
+          await audit(tx, { userId: prior.id, actorId: prior.id, action: 'account.claimed_by_oauth', meta: { provider } });
+        }
+        if (prior) {
+          ({ rows: [user] } = await tx.query(`UPDATE users SET ${column} = $2 WHERE id = $1 RETURNING id, role, status`, [prior.id, identity.id]));
+        }
       }
       if (!user) {
         ({ rows: [user] } = await tx.query(`INSERT INTO users (email, ${column}) VALUES ($1, $2) RETURNING id, role, status`, [identity.email.toLowerCase(), identity.id]));
@@ -225,7 +254,10 @@ export class AuthService {
 
   async consumeChallenge<T>(id: string, kind: 'totp' | 'oauth_state'): Promise<T | null> {
     const { rows: [c] } = await this.pool.query<{ payload: T }>(
-      `UPDATE auth_challenges SET used_at = now() WHERE id = $1 AND kind = $2 AND used_at IS NULL AND expires_at > now() RETURNING payload`,
+      // The payload (which may hold freshly issued tokens) is wiped as it is read.
+      `UPDATE auth_challenges a SET used_at = now(), payload = '{}'::jsonb
+         FROM (SELECT id, payload FROM auth_challenges WHERE id = $1 AND kind = $2 AND used_at IS NULL AND expires_at > now() FOR UPDATE) c
+        WHERE a.id = c.id RETURNING c.payload`,
       [id, kind],
     );
     return c?.payload ?? null;

@@ -57,7 +57,7 @@ export class LiveNotifier implements Notifier {
         await this.whatsapp(m.to, body);
         return;
       case 'push':
-        // In-app notifications are stored by the alerts module; native push arrives with the mobile app.
+        // In-app notifications are stored by the alerts module; browser push goes through PushService.
         return;
     }
   }

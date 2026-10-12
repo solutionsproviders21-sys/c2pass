@@ -6,6 +6,7 @@ import { Suspense, useState } from 'react';
 import { Bell, BellOff, Mail, MessageCircle, Pause, Play, Smartphone, Trash2 } from 'lucide-react';
 import { ALERT_CHANNELS, type AlertChannel } from '@c2pass/shared';
 import { Badge, Button, Card, CentreStatusBadge, cx, Empty, ErrorNotice, LinkButton, Notice, PageHeader, Select, Spinner } from '@/components/ui';
+import { PushToggle } from '@/components/push-toggle';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useAction, useLoad } from '@/lib/hooks';
@@ -94,6 +95,7 @@ function Alerts() {
           <div className="mt-3"><ErrorNotice error={action.error} /></div>
         </Card>
       )}
+      {plan?.centreAlerts !== 0 && <div className="mt-4"><PushToggle /></div>}
 
       <div className="mt-6 grid gap-6 lg:grid-cols-[1.3fr_1fr]">
         <div>

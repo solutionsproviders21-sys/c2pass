@@ -5,6 +5,7 @@ import { badRequest, notFound, upgradeRequired } from '../../common/errors.js';
 import { CONFIG, type Config } from '../../config.js';
 import { JOBS, type Jobs } from '../../infra/jobs.js';
 import { NOTIFIER, type Notifier } from '../../infra/notifier.js';
+import { PUSH, type PushService } from '../../infra/push.js';
 import { PG } from '../../infra/tokens.js';
 import { CentresService } from './centres.service.js';
 
@@ -32,6 +33,7 @@ export class AlertsService implements OnModuleInit {
     @Inject(PG) private readonly pool: pg.Pool,
     @Inject(JOBS) private readonly jobs: Jobs,
     @Inject(NOTIFIER) private readonly notifier: Notifier,
+    @Inject(PUSH) private readonly push: PushService,
     @Inject(CONFIG) private readonly config: Config,
     @Inject(CentresService) private readonly centres: CentresService,
   ) {}
@@ -135,6 +137,8 @@ export class AlertsService implements OnModuleInit {
           [r.user_id, centreId, channel, title, body, url, status, error],
         );
       }
+      // Browser notification on every device the candidate enabled, even with the site closed.
+      await this.push.sendToUser(r.user_id, { title, body: `${seats} à ${centre.name}${when}.`, url });
       await this.pool.query('UPDATE session_alerts SET last_notified_at = now() WHERE id = $1', [r.alert_id]);
     }
     this.logger.log(`Centre ${centre.name}: ${eligible.length} subscriber(s) alerted`);

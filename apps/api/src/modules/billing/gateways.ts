@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import Stripe from 'stripe';
+import { AppError } from '../../common/errors.js';
 import type { Config } from '../../config.js';
 
 export type PaymentMethod = 'orange_money' | 'mtn_momo' | 'stripe';
@@ -41,6 +42,16 @@ export class SandboxGateway implements PaymentGateway {
   }
   async status(): Promise<PaymentStatus> {
     return 'succeeded';
+  }
+}
+
+/** A payment method whose merchant credentials are missing in live mode: refused, never silently free. */
+export class UnavailableGateway implements PaymentGateway {
+  async checkout(): Promise<CheckoutResult> {
+    throw new AppError(503, 'payment_method_unavailable', 'Ce moyen de paiement n’est pas encore disponible. Choisissez-en un autre.');
+  }
+  async status(): Promise<PaymentStatus> {
+    return 'pending';
   }
 }
 
@@ -181,9 +192,10 @@ export class StripeGateway implements PaymentGateway {
 export function buildGateways(cfg: Config): Record<PaymentMethod, PaymentGateway> {
   const sandbox = new SandboxGateway();
   if (cfg.PAYMENTS_MODE !== 'live') return { orange_money: sandbox, mtn_momo: sandbox, stripe: sandbox };
+  const unavailable = new UnavailableGateway();
   return {
-    orange_money: cfg.ORANGE_MONEY_CLIENT_ID ? new OrangeMoneyGateway(cfg) : sandbox,
-    mtn_momo: cfg.MTN_MOMO_API_USER ? new MtnMomoGateway(cfg) : sandbox,
-    stripe: cfg.STRIPE_SECRET_KEY ? new StripeGateway(cfg.STRIPE_SECRET_KEY) : sandbox,
+    orange_money: cfg.ORANGE_MONEY_CLIENT_ID && cfg.ORANGE_MONEY_CLIENT_SECRET && cfg.ORANGE_MONEY_MERCHANT_KEY ? new OrangeMoneyGateway(cfg) : unavailable,
+    mtn_momo: cfg.MTN_MOMO_API_USER && cfg.MTN_MOMO_API_KEY && cfg.MTN_MOMO_SUBSCRIPTION_KEY ? new MtnMomoGateway(cfg) : unavailable,
+    stripe: cfg.STRIPE_SECRET_KEY ? new StripeGateway(cfg.STRIPE_SECRET_KEY) : unavailable,
   };
 }

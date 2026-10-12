@@ -1,3 +1,5 @@
+import { createECDH, randomBytes } from 'node:crypto';
+import ece from 'http_ece';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { totpCode } from '../src/infra/crypto.js';
 import { adminToken, auth, createTestApp, newStudent, setPlan, teacherToken, type TestContext } from './helpers.js';
@@ -283,6 +285,45 @@ describe('centres and real-time alerts', () => {
     expect(ctx.notifier.sent.filter((m) => m.to === pro.email || m.to === standard.email)).toHaveLength(0);
   });
 
+  it('sends encrypted browser push notifications to the devices a candidate enabled', async () => {
+    expect((await ctx.http.get('/api/push/key')).body.publicKey).toMatch(/^[A-Za-z0-9_-]{80,}$/);
+    const s = await newStudent(ctx);
+    await setPlan(ctx, s.id, 'pro');
+    const device = createECDH('prime256v1');
+    device.generateKeys();
+    const authSecret = randomBytes(16);
+    const keys = { p256dh: device.getPublicKey('base64url'), auth: authSecret.toString('base64url') };
+    const endpoint = `https://fcm.googleapis.com/fcm/send/${s.id}`;
+
+    // Only browser push services are accepted (no requests to arbitrary hosts), and only for signed-in users.
+    for (const bad of ['http://fcm.googleapis.com/x', 'https://169.254.169.254/latest', 'https://evil.example/fcm.googleapis.com']) {
+      expect((await ctx.http.post('/api/push/subscriptions').set(auth(s.token)).send({ endpoint: bad, keys })).status).toBe(400);
+    }
+    expect((await ctx.http.post('/api/push/subscriptions').send({ endpoint, keys })).status).toBe(401);
+    expect((await ctx.http.post('/api/push/subscriptions').set(auth(s.token)).send({ endpoint, keys })).status).toBe(204);
+
+    const centre = (await ctx.http.get('/api/centres?status=closed')).body[0];
+    expect((await ctx.http.post('/api/alerts/subscribe').set(auth(s.token)).send({ centreId: centre.id, channels: ['email'] })).status).toBe(201);
+    ctx.pushed.length = 0;
+    const admin = await adminToken(ctx);
+    await ctx.http.patch(`/api/centres/${centre.id}/status`).set(auth(admin)).send({ status: 'open' });
+
+    const req = ctx.pushed.find((p) => p.endpoint === endpoint)!;
+    expect(req.headers.Authorization).toMatch(/^vapid t=.+, k=.+/);
+    expect(req.headers['Content-Encoding']).toBe('aes128gcm');
+    const payload = JSON.parse(ece.decrypt(req.body!, { version: 'aes128gcm', privateKey: device, authSecret }).toString());
+    expect(payload.title).toContain(centre.city);
+    expect(payload.url).toContain(`/alertes/inscription/${centre.id}`);
+
+    // A device that uninstalled the site answers 410: its subscription is dropped.
+    ctx.pushStatus.set(endpoint, 410);
+    await ctx.http.patch(`/api/centres/${centre.id}/status`).set(auth(admin)).send({ status: 'full' });
+    await ctx.pool.query('UPDATE session_alerts SET last_notified_at = NULL WHERE user_id = $1', [s.id]);
+    await ctx.http.patch(`/api/centres/${centre.id}/status`).set(auth(admin)).send({ status: 'open' });
+    const { rows } = await ctx.pool.query('SELECT 1 FROM push_subscriptions WHERE user_id = $1', [s.id]);
+    expect(rows).toHaveLength(0);
+  });
+
   it('caps the number of watched centres for Premium Standard', async () => {
     const s = await newStudent(ctx);
     await setPlan(ctx, s.id, 'standard');
@@ -382,5 +423,72 @@ describe('human correction (Premium Pro)', () => {
     const free = await newStudent(ctx);
     const refused = await ctx.http.post('/api/training/writing').set(auth(free.token)).send({ questionId: 'EE-S2-T3', text: 'Texte', humanReview: true });
     expect(refused.status).toBe(402);
+  });
+});
+
+describe('security hardening', () => {
+  it('does not leak exam answers through training or abandoned simulations', async () => {
+    const s = await newStudent(ctx);
+    await setPlan(ctx, s.id, 'pro');
+    const created = await ctx.http.post('/api/simulator/sessions').set(auth(s.token)).send({ type: 'section', skill: 'CE' });
+    const started = await ctx.http.post(`/api/simulator/sessions/${created.body.id}/start`).set(auth(s.token)).send({});
+    const qid = started.body.current.questions[0].id;
+    const viaTraining = await ctx.http.post('/api/training/answer').set(auth(s.token)).send({ questionId: qid, choice: 0 });
+    expect(viaTraining.status).toBe(409);
+    expect(JSON.stringify(viaTraining.body)).not.toMatch(/correctAnswer/);
+
+    expect((await ctx.http.post(`/api/simulator/sessions/${created.body.id}/abandon`).set(auth(s.token))).status).toBeLessThan(300);
+    const result = await ctx.http.get(`/api/simulator/sessions/${created.body.id}/result`).set(auth(s.token));
+    expect(result.status).toBe(200);
+    expect(result.body.review.CE).toBeUndefined();
+    expect(JSON.stringify(result.body)).not.toMatch(/correctAnswer/);
+  });
+
+  it('needs the password to enrol a second factor and never replaces an active one', async () => {
+    const s = await newStudent(ctx);
+    expect((await ctx.http.post('/api/auth/totp/setup').set(auth(s.token)).send({})).status).toBe(400);
+    const ok = await ctx.http.post('/api/auth/totp/setup').set(auth(s.token)).send({ password: 'MotDePasse123' });
+    expect(ok.status).toBe(201);
+    await ctx.pool.query('UPDATE users SET totp_enabled = true WHERE id = $1', [s.id]);
+    expect((await ctx.http.post('/api/auth/totp/setup').set(auth(s.token)).send({ password: 'MotDePasse123' })).status).toBe(409);
+  });
+
+  it('closes every session when a rotated refresh token is replayed', async () => {
+    const s = await newStudent(ctx);
+    const rotated = await ctx.http.post('/api/auth/refresh').send({ refreshToken: s.refreshToken });
+    expect(rotated.status).toBe(200);
+    await ctx.pool.query(`UPDATE refresh_tokens SET revoked_at = now() - interval '1 minute' WHERE user_id = $1 AND rotated`, [s.id]);
+    expect((await ctx.http.post('/api/auth/refresh').send({ refreshToken: s.refreshToken })).status).toBe(401);
+    expect((await ctx.http.post('/api/auth/refresh').send({ refreshToken: rotated.body.refreshToken })).status).toBe(401);
+  });
+
+  it('keeps human grades final and refuses grading one’s own work', async () => {
+    const s = await newStudent(ctx);
+    await setPlan(ctx, s.id, 'pro');
+    const sub = await ctx.http.post('/api/training/writing').set(auth(s.token)).send({ questionId: 'EE-S2-T3', text: 'Les réseaux sociaux ont transformé le débat public, certes, mais ils enferment aussi chacun.', humanReview: true });
+    const teacher = await teacherToken(ctx);
+    const review = (await ctx.http.get('/api/reviews').set(auth(teacher))).body.find((r: { submissionId: string }) => r.submissionId === sub.body.id);
+    const grade = { score: 12, comment: 'Bonne structure, vocabulaire à enrichir.' };
+    expect((await ctx.http.post(`/api/reviews/${review.id}`).set(auth(teacher)).send(grade)).status).toBe(201);
+    expect((await ctx.http.post(`/api/reviews/${review.id}`).set(auth(teacher)).send({ ...grade, score: 2 })).status).toBe(409);
+
+    const { rows: [t] } = await ctx.pool.query<{ id: string }>(`SELECT id FROM users WHERE email = 'correcteur@c2pass.cm'`);
+    await ctx.pool.query(`UPDATE users SET plan_id = 'pro', plan_expires_at = now() + interval '1 day' WHERE id = $1`, [t.id]);
+    const own = await ctx.http.post('/api/training/writing').set(auth(teacher)).send({ questionId: 'EE-S2-T3', text: 'Ma propre copie, que je ne dois pas pouvoir noter moi-même.', humanReview: true });
+    const ownReview = (await ctx.http.get('/api/reviews').set(auth(teacher))).body.find((r: { submissionId: string }) => r.submissionId === own.body.id);
+    expect((await ctx.http.post(`/api/reviews/${ownReview.id}`).set(auth(teacher)).send(grade)).status).toBe(409);
+  });
+
+  it('limits pending Mobile Money prompts and never activates a plan through an unconfigured live gateway', async () => {
+    const s = await newStudent(ctx);
+    await ctx.pool.query(`INSERT INTO payments (user_id, plan_id, amount, method) SELECT $1, 'standard', 9900, 'mtn_momo' FROM generate_series(1, 3)`, [s.id]);
+    const r = await ctx.http.post('/api/payments/checkout').set(auth(s.token)).send({ planId: 'standard', method: 'mtn_momo', phone: '+237 670 00 11 22' });
+    expect(r.status).toBe(429);
+
+    const { buildGateways } = await import('../src/modules/billing/gateways.js');
+    const live = buildGateways({ ...ctx.config, PAYMENTS_MODE: 'live', STRIPE_SECRET_KEY: undefined, MTN_MOMO_API_USER: undefined, ORANGE_MONEY_CLIENT_ID: undefined });
+    for (const g of Object.values(live)) {
+      await expect(g.checkout({ paymentId: 'x', amount: 9900, description: 'x', returnUrl: '', cancelUrl: '', notifyUrl: '' })).rejects.toMatchObject({ code: 'payment_method_unavailable' });
+    }
   });
 });

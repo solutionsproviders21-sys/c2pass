@@ -44,9 +44,15 @@ const schema = z.object({
   TWILIO_FROM: optional,
   WHATSAPP_TOKEN: optional,
   WHATSAPP_PHONE_NUMBER_ID: optional,
+  /** Web Push (alerts on phones and computers, even with the site closed). Generate with: npx web-push generate-vapid-keys */
+  VAPID_PUBLIC_KEY: optional,
+  VAPID_PRIVATE_KEY: optional,
+  VAPID_SUBJECT: z.string().default('mailto:alertes@c2pass.cm'),
 
   PAYMENTS_MODE: z.enum(['sandbox', 'live']).default('sandbox'),
-  PAYMENTS_WEBHOOK_SECRET: z.string().default('change-me'),
+  /** In production, sandbox payments (plans activated without paying) need this explicit opt-in. Demo servers only. */
+  ALLOW_SANDBOX_PAYMENTS: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),
+  PAYMENTS_WEBHOOK_SECRET: optional,
   ORANGE_MONEY_BASE_URL: z.string().default('https://api.orange.com'),
   ORANGE_MONEY_CLIENT_ID: optional,
   ORANGE_MONEY_CLIENT_SECRET: optional,
@@ -70,6 +76,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (config.NODE_ENV === 'production') {
     if (config.JWT_SECRET.startsWith('dev-only')) throw new Error('JWT_SECRET must be set in production');
     if (config.VAULT_KEY === schema.shape.VAULT_KEY.parse(undefined)) throw new Error('VAULT_KEY must be set in production');
+    if (config.PAYMENTS_MODE !== 'live' && !config.ALLOW_SANDBOX_PAYMENTS) {
+      throw new Error('PAYMENTS_MODE=sandbox activates plans without payment: set PAYMENTS_MODE=live, or ALLOW_SANDBOX_PAYMENTS=true on a demo server');
+    }
   }
   if (Buffer.from(config.VAULT_KEY, 'base64').length !== 32) throw new Error('VAULT_KEY must be 32 bytes, base64-encoded');
   return config;

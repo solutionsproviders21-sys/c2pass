@@ -5,7 +5,7 @@ import { LEVELS, PLAN_IDS, PLANS, SKILLS } from '@c2pass/shared';
 import type pg from 'pg';
 import { z } from 'zod';
 import { CurrentUser, Public, Roles, type AuthUser } from '../../common/auth.js';
-import { badRequest, notFound } from '../../common/errors.js';
+import { badRequest, conflict, notFound } from '../../common/errors.js';
 import { audit } from '../../infra/audit.js';
 import { STORAGE, type Storage } from '../../infra/storage.js';
 import { PG } from '../../infra/tokens.js';
@@ -250,10 +250,12 @@ export class ReviewsController {
   async grade(@CurrentUser() teacher: AuthUser, @Param('id') id: string, @Body() body: unknown) {
     const b = z.object({ score: z.number().min(0).max(20), comment: z.string().trim().min(10).max(4_000) }).parse(body);
     const { rows: [r] } = await this.pool.query<{ submission_id: string; kind: 'writing' | 'speaking' }>(
-      `UPDATE human_reviews SET status = 'done', score = $2, comment = $3, teacher_id = $4, done_at = now() WHERE id = $1 RETURNING submission_id, kind`,
+      // A grade is final, and nobody grades their own work.
+      `UPDATE human_reviews SET status = 'done', score = $2, comment = $3, teacher_id = $4, done_at = now()
+        WHERE id = $1 AND status = 'pending' AND user_id <> $4 RETURNING submission_id, kind`,
       [z.uuid().parse(id), b.score, b.comment, teacher.id],
     );
-    if (!r) throw notFound('Correction');
+    if (!r) throw conflict('review_closed', 'Cette copie est déjà corrigée, ou c’est la vôtre.');
     const review = { score: Math.round(b.score), comment: b.comment, teacherId: teacher.id, at: new Date() };
     const sub = r.kind === 'writing'
       ? await this.content.writings.findOneAndUpdate({ _id: r.submission_id }, { $set: { humanReview: review } })

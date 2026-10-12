@@ -6,6 +6,7 @@ import { Cipher } from './crypto.js';
 import { createPool } from './database.js';
 import { BullJobs, InlineJobs, JOBS, type Jobs } from './jobs.js';
 import { ConsoleNotifier, LiveNotifier, NOTIFIER } from './notifier.js';
+import { PUSH, PushService } from './push.js';
 import { LocalStorage, S3Storage, STORAGE } from './storage.js';
 import { MONGO, PG } from './tokens.js';
 
@@ -28,6 +29,7 @@ const mongoClients = new WeakMap<Db, MongoClient>();
     },
     { provide: Cipher, inject: [CONFIG], useFactory: (c: Config) => new Cipher(c.VAULT_KEY, c.VAULT_KEY_ID) },
     { provide: NOTIFIER, inject: [CONFIG], useFactory: (c: Config) => (c.NOTIFICATIONS_MODE === 'live' ? new LiveNotifier(c) : new ConsoleNotifier()) },
+    { provide: PUSH, inject: [PG, CONFIG], useFactory: (pool: pg.Pool, c: Config) => new PushService(pool, c) },
     { provide: STORAGE, inject: [CONFIG], useFactory: (c: Config) => (c.S3_BUCKET
       ? new S3Storage(c.S3_BUCKET, { endpoint: c.S3_ENDPOINT, region: c.S3_REGION, accessKeyId: c.S3_ACCESS_KEY_ID, secretAccessKey: c.S3_SECRET_ACCESS_KEY })
       : new LocalStorage(c.STORAGE_DIR)) },
@@ -37,7 +39,7 @@ const mongoClients = new WeakMap<Db, MongoClient>();
       useFactory: (c: Config): Jobs => (c.REDIS_URL ? new BullJobs(c.REDIS_URL, process.env.WORKERS !== 'off') : new InlineJobs()),
     },
   ],
-  exports: [CONFIG, PG, MONGO, Cipher, NOTIFIER, STORAGE, JOBS],
+  exports: [CONFIG, PG, MONGO, Cipher, NOTIFIER, PUSH, STORAGE, JOBS],
 })
 export class InfraModule implements OnApplicationShutdown {
   constructor(

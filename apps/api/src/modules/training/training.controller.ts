@@ -5,7 +5,7 @@ import type { Response } from 'express';
 import type pg from 'pg';
 import { z } from 'zod';
 import { CurrentUser, type AuthUser } from '../../common/auth.js';
-import { badRequest, notFound, upgradeRequired } from '../../common/errors.js';
+import { badRequest, conflict, notFound, upgradeRequired } from '../../common/errors.js';
 import { assertExerciseQuota, exercisesToday } from '../../common/quotas.js';
 import { STORAGE, type Storage } from '../../infra/storage.js';
 import { PG } from '../../infra/tokens.js';
@@ -63,9 +63,10 @@ export class TrainingController {
 
   /** Listening in training mode: replays are allowed (unlike the exam simulator). */
   @Get('training/audio/:questionId')
-  async audio(@Param('questionId') id: string, @Res() res: Response) {
+  async audio(@CurrentUser() user: AuthUser, @Param('questionId') id: string, @Res() res: Response) {
     const q = await this.content.byId(id);
     if (!q || q.skill !== 'CO') throw notFound('Audio');
+    await this.assertNotInExam(user.id, id);
     if (q.audioKey) {
       const file = await this.storage.get(q.audioKey);
       if (file) {
@@ -83,6 +84,7 @@ export class TrainingController {
     const b = z.object({ questionId: z.string().min(1), choice: z.number().int().min(0).max(3) }).parse(body);
     const q = await this.content.byId(b.questionId);
     if (!q || q.type !== 'mcq') throw notFound('Question');
+    await this.assertNotInExam(user.id, q._id);
     await assertExerciseQuota(this.pool, user.id, user.plan);
     const correct = q.correctAnswer === b.choice;
     await this.pool.query(
@@ -96,6 +98,16 @@ export class TrainingController {
       whyWrong: correct ? null : (q.distractors?.[b.choice] || null),
       transcript: q.skill === 'CO' ? (q.transcript ?? q.context ?? null) : null,
     };
+  }
+
+  /** Training must not become a way to get the answer or replay the audio of a question in a running simulation. */
+  private async assertNotInExam(userId: string, questionId: string) {
+    const { rowCount } = await this.pool.query(
+      `SELECT 1 FROM exam_sessions s WHERE s.user_id = $1 AND s.status IN ('created', 'in_progress')
+          AND EXISTS (SELECT 1 FROM jsonb_each(s.items) e WHERE e.value ? $2) LIMIT 1`,
+      [userId, questionId],
+    );
+    if (rowCount) throw conflict('question_in_exam', 'Cette question fait partie de votre simulation en cours.');
   }
 
   @Post('training/writing')

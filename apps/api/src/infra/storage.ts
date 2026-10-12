@@ -1,11 +1,12 @@
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, normalize } from 'node:path';
-import { GetObjectCommand, NoSuchKey, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { DeleteObjectCommand, GetObjectCommand, NoSuchKey, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 
 /** Port for binary files (exam audio, candidate recordings). Local disk in dev, S3-compatible storage in production. */
 export interface Storage {
   put(key: string, data: Buffer, contentType: string): Promise<void>;
   get(key: string): Promise<{ data: Buffer; contentType: string } | null>;
+  delete(key: string): Promise<void>;
 }
 
 export class LocalStorage implements Storage {
@@ -33,6 +34,12 @@ export class LocalStorage implements Storage {
     }
     const contentType = await readFile(`${p}.type`, 'utf8').catch(() => 'application/octet-stream');
     return { data: await readFile(p), contentType };
+  }
+
+  async delete(key: string) {
+    const p = this.path(key);
+    await rm(p, { force: true });
+    await rm(`${p}.type`, { force: true });
   }
 }
 
@@ -62,6 +69,10 @@ export class S3Storage implements Storage {
       if (e instanceof NoSuchKey || (e as { name?: string }).name === 'NoSuchKey') return null;
       throw e;
     }
+  }
+
+  async delete(key: string) {
+    await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
   }
 }
 

@@ -15,7 +15,11 @@ export function configureApp(app: INestApplication, config: Config) {
   app.use(cookieParser());
   app.enableCors({ origin: config.CORS_ORIGINS.split(',').map((o) => o.trim()), credentials: true });
   if (config.NODE_ENV !== 'test') {
-    app.use(['/api/auth/login', '/api/auth/register', '/api/auth/totp', '/api/auth/password/forgot', '/api/auth/password/reset'], rateLimit({ windowMs: 15 * 60_000, limit: 30, standardHeaders: 'draft-8', legacyHeaders: false }));
+    // In-memory counters: per API process. With several instances behind a load balancer, use a shared (Redis) store.
+    const limit = (windowMinutes: number, max: number) => rateLimit({ windowMs: windowMinutes * 60_000, limit: max, standardHeaders: 'draft-8', legacyHeaders: false });
+    app.use(['/api/auth/login', '/api/auth/register', '/api/auth/totp', '/api/auth/password', '/api/auth/oauth/exchange'], limit(15, 30));
+    app.use('/api/auth/refresh', limit(15, 120));
+    app.use('/api/payments/checkout', limit(60, 20));
     app.use('/api/leads', rateLimit({ windowMs: 60 * 60_000, limit: 20 }));
   }
 }

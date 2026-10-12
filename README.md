@@ -2,7 +2,7 @@
 
 C2Pass est une plateforme de préparation au **TCF Canada**, visant le niveau **C2**, pour les candidats d’Afrique centrale (Cameroun, Gabon, Congo, Tchad, RDC, RCA, Guinée Équatoriale).
 
-Ce dépôt couvre la plateforme web décrite dans le cahier des charges (« c2pass bon.pdf », v1.0). L’application mobile est prévue après le lancement (T+3 mois) et ne fait pas partie de ce dépôt.
+Ce dépôt couvre la plateforme web décrite dans le cahier des charges (« c2pass bon.pdf », v1.0). L’application mobile native est prévue après le lancement (T+3 mois). D’ici là, le site s’installe sur l’écran d’accueil d’un téléphone comme une application (icône, plein écran, page hors connexion, notifications).
 
 > Ce projet est indépendant de la plateforme de location et de suivi de véhicules, qui vit dans un autre dossier.
 
@@ -47,7 +47,7 @@ Ce dépôt couvre la plateforme web décrite dans le cahier des charges (« c2pa
 
 ### 4. Alertes en temps réel
 - **Veille légale** : la page publique de chaque centre est consultée toutes les 5 à 10 minutes, en respectant robots.txt. Il n’y a ni robot de réservation, ni contournement de captcha, ni proxy.
-- **Ouverture d’un centre** : quand un centre passe à « Ouvert » (par la veille ou par un administrateur), C2Pass envoie l’alerte par e-mail, SMS (Twilio), WhatsApp et dans l’application. Les abonnés prioritaires sont servis en premier, et un candidat n’est pas relancé deux fois en 6 heures.
+- **Ouverture d’un centre** : quand un centre passe à « Ouvert » (par la veille ou par un administrateur), C2Pass envoie l’alerte par e-mail, SMS (Twilio), WhatsApp, dans l’application, et en notification du navigateur sur chaque téléphone ou ordinateur où le candidat l’a activée (Web Push, même site fermé). Les abonnés prioritaires sont servis en premier, et un candidat n’est pas relancé deux fois en 6 heures.
 - **Coffre-fort candidat** : les données sont chiffrées en AES-256-GCM, et chaque lecture est journalisée.
 - **Assistant d’inscription** : le formulaire officiel s’ouvre dans un nouvel onglet, et le candidat copie ses informations depuis le coffre-fort. Rien n’est soumis à sa place.
 
@@ -65,12 +65,17 @@ Les moyens de paiement sont Orange Money (Web Payment), MTN MoMo (Collection) et
 ## Sécurité et RGPD
 
 - **Mots de passe** : hachés avec Argon2id. Un mot de passe oublié se réinitialise par un lien reçu par e-mail, valable 60 minutes et utilisable une seule fois ; la réinitialisation ferme toutes les sessions ouvertes.
-- **Sessions** : JWT valable 1 heure, avec rotation des jetons de rafraîchissement.
-- **Comptes administrateurs** : la double authentification (TOTP) est obligatoire. Elle est facultative pour les autres comptes.
+- **Sessions** : JWT valable 1 heure, avec rotation des jetons de rafraîchissement. Un jeton déjà remplacé qui revient (vol) ferme toutes les sessions du compte.
+- **Comptes administrateurs** : la double authentification (TOTP) est obligatoire. Elle est facultative pour les autres comptes, demande le mot de passe pour être activée et ne peut pas être remplacée une fois active.
+- **Connexion Google / Facebook** : liée au navigateur qui l’a lancée (pas de connexion forcée par un lien piégé). Si un compte du même e-mail n’avait jamais prouvé son adresse, son mot de passe et ses sessions sont annulés à la première connexion par Google ou Facebook.
+- **Examen** : pendant une simulation, ses questions ne peuvent pas être corrigées ni réécoutées depuis l’entraînement ; une simulation abandonnée ne montre les corrigés que des sections terminées.
+- **Paiements** : en production, l’API refuse de démarrer en mode sandbox (offres activées sans paiement) sauf autorisation explicite `ALLOW_SANDBOX_PAYMENTS=true`, réservée à un serveur de démonstration. Un moyen de paiement sans clés est refusé, jamais gratuit. Au plus 3 paiements Mobile Money en attente par candidat.
+- **Correcteurs** : une note rendue est définitive, et personne ne corrige sa propre copie.
 - **Anti-fraude** : empreinte du navigateur à la connexion et au début de chaque examen, et détection des appareils utilisés par plusieurs comptes.
-- **Droits RGPD** : chaque utilisateur peut exporter ses données en JSON ou supprimer son compte (effacement, et anonymisation des paiements).
+- **Droits RGPD** : chaque utilisateur peut exporter ses données en JSON ou supprimer son compte : effacement des données, des copies, des simulations et des fichiers audio eux-mêmes, et anonymisation des paiements.
 - **Journal d’audit** : accès au coffre-fort et actions des administrateurs.
-- **Protection de l’API** : en-têtes Helmet, CORS restreint et limitation du débit.
+- **Protection de l’API** : en-têtes Helmet, CORS restreint et limitation du débit (connexion, paiement, rafraîchissement). Les compteurs sont gardés en mémoire, par processus : avec plusieurs serveurs d’API, il faut un stockage partagé (Redis).
+- **Protection du site** : politique de sécurité du contenu (CSP) qui interdit les scripts et connexions vers d’autres sites.
 
 ## Architecture
 
@@ -128,5 +133,5 @@ Tous les comptes ont le mot de passe `Demo1234!`.
 
 1. **Contenu** : remplacer le contenu de démonstration (102 questions, 8 fiches) par la banque validée par l’expert pédagogique. L’objectif est de 5 000 questions ou plus, ajoutées par l’import JSON du back-office. Ajouter les enregistrements audio des documents de compréhension orale. Sans enregistrement, la voix de synthèse du navigateur lit la transcription une seule fois.
 2. **Centres** : renseigner pour chaque centre l’adresse, le téléphone, le lien d’inscription, l’URL surveillée et les motifs à détecter. Volontairement, aucune donnée non vérifiée n’est fournie.
-3. **Clés des prestataires** : ajouter les clés OpenAI, LanguageTool, Twilio, WhatsApp Cloud, Orange Money, MTN MoMo, Stripe, Google et Facebook dans `.env`. Chaque service reste en mode démonstration tant que sa clé est absente.
+3. **Clés des prestataires** : ajouter les clés OpenAI, LanguageTool, Twilio, WhatsApp Cloud, Orange Money, MTN MoMo, Stripe, Google et Facebook dans `.env`, ainsi que les clés VAPID des notifications (`npx web-push generate-vapid-keys`). Chaque service reste en mode démonstration tant que sa clé est absente, sauf les paiements : en `PAYMENTS_MODE=live`, un moyen de paiement sans clés est simplement indisponible.
 4. **Garder la clé du coffre-fort** : sauvegarder `VAULT_KEY` hors du serveur. Une clé perdue rend les coffres-forts illisibles.

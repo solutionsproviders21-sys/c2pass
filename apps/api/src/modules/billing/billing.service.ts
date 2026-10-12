@@ -1,13 +1,15 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { PLANS, type PlanId } from '@c2pass/shared';
 import type pg from 'pg';
-import { badRequest, notFound } from '../../common/errors.js';
+import { AppError, badRequest, notFound } from '../../common/errors.js';
 import { CONFIG, type Config } from '../../config.js';
 import { audit } from '../../infra/audit.js';
 import { withTransaction } from '../../infra/database.js';
 import { NOTIFIER, type Notifier } from '../../infra/notifier.js';
 import { PG } from '../../infra/tokens.js';
-import { buildGateways, type PaymentGateway, type PaymentMethod, type PaymentStatus } from './gateways.js';
+import { buildGateways, UnavailableGateway, type PaymentGateway, type PaymentMethod, type PaymentStatus } from './gateways.js';
+
+const MAX_PENDING_PAYMENTS = 3;
 
 export interface PaymentRow {
   id: string;
@@ -45,6 +47,13 @@ export class BillingService {
     const plan = PLANS[planId];
     if (!plan || plan.priceXaf <= 0) throw badRequest('invalid_plan', 'Offre invalide');
     if (method !== 'stripe' && !payerPhone) throw badRequest('phone_required', 'Numéro Mobile Money requis');
+    if (this.gateways[method] instanceof UnavailableGateway) await this.gateways[method].checkout();
+    // Each Mobile Money checkout sends a prompt to a phone: a few pending attempts at a time, no more.
+    const { rows: [{ n }] } = await this.pool.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM payments WHERE user_id = $1 AND status = 'pending' AND created_at > now() - interval '30 minutes'`,
+      [userId],
+    );
+    if (n >= MAX_PENDING_PAYMENTS) throw new AppError(429, 'too_many_payments', 'Plusieurs paiements sont déjà en attente. Validez-les sur votre téléphone ou réessayez dans 30 minutes.');
     const { rows: [p] } = await this.pool.query<PaymentRow>(
       `INSERT INTO payments (user_id, plan_id, amount, method, payer_phone) VALUES ($1, $2, $3, $4, $5) RETURNING *`,
       [userId, planId, plan.priceXaf, method, payerPhone ?? null],

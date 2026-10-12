@@ -1,7 +1,8 @@
-import { Body, Controller, Delete, Get, HttpCode, Inject, Param, Patch, Post, Put, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Headers, HttpCode, Inject, Param, Patch, Post, Put, Query } from '@nestjs/common';
 import { ALERT_CHANNELS, CENTRE_STATUSES, COUNTRIES } from '@c2pass/shared';
 import { z } from 'zod';
 import { CurrentUser, Public, Roles, type AuthUser } from '../../common/auth.js';
+import { PUSH, isAllowedPushEndpoint, type PushService } from '../../infra/push.js';
 import { AlertsService } from './alerts.service.js';
 import { CentresService, toCentre } from './centres.service.js';
 import { WatcherService } from './watcher.service.js';
@@ -101,10 +102,36 @@ export class CentresController {
 }
 
 const channels = z.array(z.enum(ALERT_CHANNELS)).min(1).transform((c) => [...new Set(c)]);
+const pushEndpoint = z.string().max(1000).refine(isAllowedPushEndpoint, 'Service de notification non reconnu');
+const pushKey = z.string().regex(/^[A-Za-z0-9_-]+=*$/).max(200);
 
 @Controller()
 export class AlertsController {
-  constructor(@Inject(AlertsService) private readonly alerts: AlertsService) {}
+  constructor(
+    @Inject(AlertsService) private readonly alerts: AlertsService,
+    @Inject(PUSH) private readonly push: PushService,
+  ) {}
+
+  /** Public VAPID key the browser needs to subscribe; null while browser push is not configured. */
+  @Public()
+  @Get('push/key')
+  pushKey() {
+    return { publicKey: this.push.publicKey };
+  }
+
+  @Post('push/subscriptions')
+  @HttpCode(204)
+  async pushSubscribe(@CurrentUser() user: AuthUser, @Body() body: unknown, @Headers('user-agent') ua?: string) {
+    const b = z.object({ endpoint: pushEndpoint, keys: z.object({ p256dh: pushKey, auth: pushKey }) }).parse(body);
+    await this.push.subscribe(user.id, b, ua);
+  }
+
+  @Post('push/unsubscribe')
+  @HttpCode(204)
+  async pushUnsubscribe(@CurrentUser() user: AuthUser, @Body() body: unknown) {
+    const b = z.object({ endpoint: z.string().max(1000) }).parse(body);
+    await this.push.unsubscribe(user.id, b.endpoint);
+  }
 
   /** POST /alerts/subscribe — subscription to one exam centre (§6.1). */
   @Post('alerts/subscribe')

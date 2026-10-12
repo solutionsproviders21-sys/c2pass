@@ -1,3 +1,4 @@
+import { createHash, randomBytes } from 'node:crypto';
 import { Body, Controller, Get, HttpCode, Inject, Param, Post, Query, Req, Res } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { z } from 'zod';
@@ -6,6 +7,10 @@ import { badRequest, unauthorized } from '../../common/errors.js';
 import { CONFIG, type Config } from '../../config.js';
 import { AuthService, type Tokens } from './auth.service.js';
 import { OAuthClient, type OAuthProvider } from './oauth.js';
+
+/** Ties an OAuth login to the browser that started it (login CSRF). Set and read on the web origin only. */
+const OAUTH_COOKIE = 'c2pass_oauth';
+const hashNonce = (v: string) => createHash('sha256').update(v).digest('base64url');
 
 const password = z.string().min(8, 'Au moins 8 caractères').max(200);
 
@@ -57,8 +62,9 @@ export class AuthController {
   }
 
   @Post('totp/setup')
-  totpSetup(@CurrentUser() user: AuthUser) {
-    return this.auth.startTotpEnrolment(user.id, user.email);
+  totpSetup(@CurrentUser() user: AuthUser, @Body() body: unknown) {
+    const b = z.object({ password: z.string().max(200).optional() }).parse(body ?? {});
+    return this.auth.startTotpEnrolment(user.id, user.email, b.password);
   }
 
   @Public()
@@ -108,7 +114,11 @@ export class AuthController {
   @Get('oauth/:provider/start')
   async oauthStart(@Param('provider') provider: string, @Res() res: Response) {
     const p = this.providerOf(provider);
-    const state = await this.auth.createChallenge(null, { provider: p }, 'oauth_state');
+    const nonce = randomBytes(24).toString('base64url');
+    const state = await this.auth.createChallenge(null, { provider: p, browser: hashNonce(nonce) }, 'oauth_state');
+    res.cookie(OAUTH_COOKIE, nonce, {
+      httpOnly: true, sameSite: 'lax', secure: this.config.PUBLIC_WEB_URL.startsWith('https:'), path: '/api/auth/oauth', maxAge: 10 * 60_000,
+    });
     res.redirect(this.oauth.authorizeUrl(p, state));
   }
 
@@ -121,11 +131,12 @@ export class AuthController {
   async oauthCallback(@Param('provider') provider: string, @Query() query: Record<string, string>, @Req() req: Request, @Res() res: Response) {
     const p = this.providerOf(provider);
     const fail = (reason: string) => res.redirect(`${this.config.PUBLIC_WEB_URL}/connexion?erreur=${encodeURIComponent(reason)}`);
-    const state = query.state ? await this.auth.consumeChallenge<{ provider: OAuthProvider }>(query.state, 'oauth_state') : null;
+    const stateId = z.uuid().safeParse(query.state);
+    const state = stateId.success ? await this.auth.consumeChallenge<{ provider: OAuthProvider; browser: string }>(stateId.data, 'oauth_state') : null;
     if (!state || state.provider !== p || !query.code) return fail('oauth_state');
     try {
       const tokens = await this.auth.loginWithOAuth(p, await this.oauth.identity(p, query.code), { ip: clientIp(req) });
-      const code = await this.auth.createChallenge(null, tokens, 'oauth_state', 2);
+      const code = await this.auth.createChallenge(null, { ...tokens, browser: state.browser }, 'oauth_state', 2);
       res.redirect(`${this.config.PUBLIC_WEB_URL}/connexion/oauth?code=${code}`);
     } catch (e) {
       fail(e instanceof Error && 'code' in e ? String((e as { code: string }).code) : 'oauth_failed');
@@ -135,11 +146,14 @@ export class AuthController {
   @Public()
   @Post('oauth/exchange')
   @HttpCode(200)
-  async oauthExchange(@Body() body: unknown): Promise<Tokens> {
+  async oauthExchange(@Body() body: unknown, @Req() req: Request, @Res({ passthrough: true }) res: Response): Promise<Tokens> {
     const { code } = z.object({ code: z.uuid() }).parse(body);
-    const tokens = await this.auth.consumeChallenge<Tokens>(code, 'oauth_state');
-    if (!tokens?.accessToken) throw unauthorized('Code de connexion expiré');
-    return tokens;
+    const nonce: unknown = req.cookies?.[OAUTH_COOKIE];
+    const grant = await this.auth.consumeChallenge<Tokens & { browser?: string }>(code, 'oauth_state');
+    // Only the browser that clicked "Continuer avec Google/Facebook" can finish the login.
+    if (!grant?.accessToken || typeof nonce !== 'string' || grant.browser !== hashNonce(nonce)) throw unauthorized('Code de connexion expiré');
+    res.clearCookie(OAUTH_COOKIE, { path: '/api/auth/oauth' });
+    return { accessToken: grant.accessToken, refreshToken: grant.refreshToken };
   }
 
   private providerOf(p: string): OAuthProvider {

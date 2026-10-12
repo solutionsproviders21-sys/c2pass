@@ -8,7 +8,9 @@ import { AppModule } from '../src/app.module.js';
 import { signAccessToken } from '../src/common/auth.js';
 import { CONFIG, type Config } from '../src/config.js';
 import { seed } from '../src/db/seed.js';
+import webpush from 'web-push';
 import { MemoryNotifier, NOTIFIER } from '../src/infra/notifier.js';
+import { PUSH, PushService, type PushTransport } from '../src/infra/push.js';
 import { MONGO, PG } from '../src/infra/tokens.js';
 import { TEST_DATABASE_URL, TEST_MONGO_DB, TEST_MONGO_URL } from './global-setup.js';
 
@@ -31,13 +33,29 @@ export interface TestContext {
   mongo: Db;
   notifier: MemoryNotifier;
   config: Config;
+  /** Web Push requests the API would have sent, and the status the fake push service answers per endpoint. */
+  pushed: Parameters<PushTransport>[0][];
+  pushStatus: Map<string, number>;
 }
 
 let seeded = false;
 
 export async function createTestApp(): Promise<TestContext> {
   const notifier = new MemoryNotifier();
-  const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).overrideProvider(NOTIFIER).useValue(notifier).compile();
+  const pushed: TestContext['pushed'] = [];
+  const pushStatus = new Map<string, number>();
+  const vapid = webpush.generateVAPIDKeys();
+  const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
+    .overrideProvider(NOTIFIER).useValue(notifier)
+    .overrideProvider(PUSH).useFactory({
+      inject: [PG, CONFIG],
+      factory: (pool: pg.Pool, c: Config) =>
+        new PushService(pool, { ...c, VAPID_PUBLIC_KEY: vapid.publicKey, VAPID_PRIVATE_KEY: vapid.privateKey }, async (req) => {
+          pushed.push(req);
+          return pushStatus.get(req.endpoint) ?? 201;
+        }),
+    })
+    .compile();
   const app = moduleRef.createNestApplication({ rawBody: true });
   const config = app.get<Config>(CONFIG);
   const { configureApp } = await import('../src/setup.js');
@@ -49,7 +67,7 @@ export async function createTestApp(): Promise<TestContext> {
     await seed(pool, mongo);
     seeded = true;
   }
-  return { app, http: request(app.getHttpServer()), pool, mongo, notifier, config };
+  return { app, http: request(app.getHttpServer()), pool, mongo, notifier, config, pushed, pushStatus };
 }
 
 let counter = 0;

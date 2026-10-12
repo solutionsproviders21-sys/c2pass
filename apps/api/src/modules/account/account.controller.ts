@@ -7,6 +7,7 @@ import { clientIp, CurrentUser, type AuthUser } from '../../common/auth.js';
 import { audit } from '../../infra/audit.js';
 import { Cipher } from '../../infra/crypto.js';
 import { withTransaction } from '../../infra/database.js';
+import { STORAGE, type Storage } from '../../infra/storage.js';
 import { PG } from '../../infra/tokens.js';
 import { ContentRepository } from '../content/content.repository.js';
 
@@ -37,6 +38,7 @@ export class AccountController {
     @Inject(PG) private readonly pool: pg.Pool,
     @Inject(Cipher) private readonly cipher: Cipher,
     @Inject(ContentRepository) private readonly content: ContentRepository,
+    @Inject(STORAGE) private readonly storage: Storage,
   ) {}
 
   @Get()
@@ -116,18 +118,19 @@ export class AccountController {
   @Get('export')
   async export(@CurrentUser() user: AuthUser, @Req() req: Request) {
     const q = (sql: string) => this.pool.query(sql, [user.id]).then((r) => r.rows);
-    const [account, sessions, practice, alerts, notifications, payments] = await Promise.all([
+    const [account, sessions, practice, alerts, notifications, payments, pushDevices] = await Promise.all([
       q(`SELECT u.email, u.role, u.plan_id, u.plan_expires_at, u.created_at, p.* FROM users u LEFT JOIN profiles p ON p.user_id = u.id WHERE u.id = $1`),
       q(`SELECT id, type, skills, status, scores, total_score, started_at, completed_at FROM exam_sessions WHERE user_id = $1`),
       q(`SELECT skill, question_id, level, correct, created_at FROM practice_attempts WHERE user_id = $1`),
       q(`SELECT center_id, channels, status, created_at FROM session_alerts WHERE user_id = $1`),
       q(`SELECT channel, title, body, created_at FROM notifications WHERE user_id = $1`),
       q(`SELECT plan_id, amount, currency, method, status, created_at FROM payments WHERE user_id = $1`),
+      q(`SELECT user_agent, created_at, last_used_at FROM push_subscriptions WHERE user_id = $1`),
     ]);
     const writings = await this.content.writings.find({ userId: user.id }).toArray();
     const recordings = await this.content.audios.find({ userId: user.id }, { projection: { key: 0 } }).toArray();
     await audit(this.pool, { userId: user.id, actorId: user.id, action: 'gdpr.export', ip: clientIp(req) });
-    return { exportedAt: new Date(), account: account[0], sessions, practice, alerts, notifications, payments, writings, recordings, vault: (await this.vault(user, req)).data };
+    return { exportedAt: new Date(), account: account[0], sessions, practice, alerts, notifications, payments, pushDevices, writings, recordings, vault: (await this.vault(user, req)).data };
   }
 
   /** Droit à l'oubli: personal data is erased; payments are kept anonymised for accounting. */
@@ -141,6 +144,11 @@ export class AccountController {
       await tx.query(`DELETE FROM notifications WHERE user_id = $1`, [user.id]);
       await tx.query(`DELETE FROM refresh_tokens WHERE user_id = $1`, [user.id]);
       await tx.query(`DELETE FROM fraud_signals WHERE user_id = $1`, [user.id]);
+      await tx.query(`DELETE FROM push_subscriptions WHERE user_id = $1`, [user.id]);
+      await tx.query(`DELETE FROM human_reviews WHERE user_id = $1`, [user.id]);
+      await tx.query(`DELETE FROM exam_sessions WHERE user_id = $1`, [user.id]);
+      await tx.query(`DELETE FROM practice_attempts WHERE user_id = $1`, [user.id]);
+      await tx.query(`UPDATE audit_logs SET ip = NULL WHERE user_id = $1 OR actor_id = $1`, [user.id]);
       await tx.query(`UPDATE payments SET payer_phone = NULL WHERE user_id = $1`, [user.id]);
       await tx.query(
         `UPDATE users SET status = 'deleted', email = 'deleted-' || id || '@c2pass.invalid', password_hash = NULL,
@@ -150,6 +158,10 @@ export class AccountController {
       await audit(tx, { userId: user.id, actorId: user.id, action: 'gdpr.erase', ip: clientIp(req) });
     });
     await this.content.writings.deleteMany({ userId: user.id });
+    // Voice recordings: the files themselves, not only their records.
+    for (const a of await this.content.audios.find({ userId: user.id }, { projection: { key: 1 } }).toArray()) {
+      if (a.key) await this.storage.delete(a.key);
+    }
     await this.content.audios.deleteMany({ userId: user.id });
   }
 }
