@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useState, type ReactNode } from 'react';
 import { Bell, BookOpen, ChartLine, LayoutDashboard, LogOut, MapPin, Menu, ShieldCheck, Timer, User, Vault, X } from 'lucide-react';
+import { VerifyEmailBanner } from './verify-email-banner';
 import { useAuth } from '@/lib/auth';
 import { Logo } from './logo';
 import { Badge, cx } from './ui';
@@ -92,6 +93,7 @@ export function StudentShell({ children }: { children: ReactNode }) {
         </Link>
       ) : null}
     >
+      <VerifyEmailBanner />
       {children}
     </Shell>
   );

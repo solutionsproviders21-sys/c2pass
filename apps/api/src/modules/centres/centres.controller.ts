@@ -1,7 +1,7 @@
 import { Body, Controller, Delete, Get, Headers, HttpCode, Inject, Param, Patch, Post, Put, Query } from '@nestjs/common';
 import { ALERT_CHANNELS, CENTRE_STATUSES, COUNTRIES } from '@c2pass/shared';
 import { z } from 'zod';
-import { CurrentUser, Public, Roles, type AuthUser } from '../../common/auth.js';
+import { assertEmailVerified, CurrentUser, Public, Roles, type AuthUser } from '../../common/auth.js';
 import { PUSH, isAllowedPushEndpoint, type PushService } from '../../infra/push.js';
 import { AlertsService } from './alerts.service.js';
 import { CentresService, toCentre } from './centres.service.js';
@@ -137,6 +137,7 @@ export class AlertsController {
   @Post('alerts/subscribe')
   subscribe(@CurrentUser() user: AuthUser, @Body() body: unknown) {
     const b = z.object({ centreId: z.uuid(), channels }).parse(body);
+    assertEmailVerified(user);
     return this.alerts.subscribe(user.id, user.plan, b.centreId, b.channels);
   }
 

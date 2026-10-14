@@ -73,7 +73,7 @@ export async function createTestApp(): Promise<TestContext> {
 let counter = 0;
 
 /** Registers a fresh student and returns an authorised agent. */
-export async function newStudent(ctx: TestContext, extra: Record<string, unknown> = {}) {
+export async function newStudent(ctx: TestContext, extra: Record<string, unknown> = {}, { verified = true } = {}) {
   counter += 1;
   const email = `candidat${Date.now()}${counter}@test.cm`;
   const res = await ctx.http.post('/api/auth/register').send({
@@ -82,6 +82,7 @@ export async function newStudent(ctx: TestContext, extra: Record<string, unknown
   });
   if (res.status !== 201) throw new Error(`register failed: ${res.status} ${JSON.stringify(res.body)}`);
   const { rows: [u] } = await ctx.pool.query<{ id: string }>('SELECT id FROM users WHERE email = $1', [email]);
+  if (verified) await ctx.pool.query('UPDATE users SET email_verified_at = now() WHERE id = $1', [u.id]);
   return { email, id: u.id, token: res.body.accessToken as string, refreshToken: res.body.refreshToken as string };
 }
 

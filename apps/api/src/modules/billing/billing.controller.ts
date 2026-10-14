@@ -3,7 +3,7 @@ import { PLAN_IDS, PLANS } from '@c2pass/shared';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import type { Request } from 'express';
 import { z } from 'zod';
-import { CurrentUser, Public, type AuthUser } from '../../common/auth.js';
+import { assertEmailVerified, CurrentUser, Public, type AuthUser } from '../../common/auth.js';
 import { badRequest, unauthorized } from '../../common/errors.js';
 import { CONFIG, type Config } from '../../config.js';
 import { BillingService } from './billing.service.js';
@@ -31,6 +31,7 @@ export class BillingController {
       method: z.enum(['orange_money', 'mtn_momo', 'stripe']),
       phone: z.string().regex(/^\+?[0-9 ]{8,20}$/).optional(),
     }).parse(body);
+    assertEmailVerified(user);
     return this.billing.checkout(user.id, b.planId, b.method, b.phone);
   }
 

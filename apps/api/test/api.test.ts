@@ -83,6 +83,31 @@ describe('authentication', () => {
     expect(ctx.notifier.sent.filter((m) => m.to.toLowerCase() === s.email)).toHaveLength(3);
   });
 
+  it('confirms the e-mail address before alerts and payments', async () => {
+    ctx.notifier.sent.length = 0;
+    const s = await newStudent(ctx, {}, { verified: false });
+    const mail = ctx.notifier.sent.find((m) => m.to === s.email && m.subject?.includes('confirmez'));
+    expect(mail?.url).toMatch(/\/verifier-email\?jeton=[A-Za-z0-9_-]{40,}$/);
+    expect((await ctx.http.get('/api/me').set(auth(s.token))).body.emailVerified).toBe(false);
+
+    await setPlan(ctx, s.id, 'pro');
+    const centre = (await ctx.http.get('/api/centres')).body[0];
+    const blocked = await ctx.http.post('/api/alerts/subscribe').set(auth(s.token)).send({ centreId: centre.id, channels: ['email'] });
+    expect(blocked.status).toBe(403);
+    expect(blocked.body.error.code).toBe('email_not_verified');
+    expect((await ctx.http.post('/api/payments/checkout').set(auth(s.token)).send({ planId: 'standard', method: 'stripe' })).status).toBe(403);
+
+    // Resending is allowed a few times an hour, then silently ignored.
+    for (let i = 0; i < 4; i++) expect((await ctx.http.post('/api/auth/email/resend').set(auth(s.token))).status).toBe(204);
+    expect(ctx.notifier.sent.filter((m) => m.to === s.email).length).toBe(3);
+
+    const token = new URL(mail!.url!).searchParams.get('jeton');
+    expect((await ctx.http.post('/api/auth/email/verify').send({ token })).status).toBe(204);
+    expect((await ctx.http.post('/api/auth/email/verify').send({ token })).status).toBe(400);
+    expect((await ctx.http.get('/api/me').set(auth(s.token))).body.emailVerified).toBe(true);
+    expect((await ctx.http.post('/api/alerts/subscribe').set(auth(s.token)).send({ centreId: centre.id, channels: ['email'] })).status).toBe(201);
+  });
+
   it('protects admin routes', async () => {
     const s = await newStudent(ctx);
     expect((await ctx.http.get('/api/admin/stats').set(auth(s.token))).status).toBe(403);
@@ -489,6 +514,28 @@ describe('security hardening', () => {
     const live = buildGateways({ ...ctx.config, PAYMENTS_MODE: 'live', STRIPE_SECRET_KEY: undefined, MTN_MOMO_API_USER: undefined, ORANGE_MONEY_CLIENT_ID: undefined });
     for (const g of Object.values(live)) {
       await expect(g.checkout({ paymentId: 'x', amount: 9900, description: 'x', returnUrl: '', cancelUrl: '', notifyUrl: '' })).rejects.toMatchObject({ code: 'payment_method_unavailable' });
+    }
+  });
+});
+
+describe('shared rate limits', () => {
+  // Needs a Redis server (CI provides one): the counters are shared by every API instance.
+  const redisUrl = process.env.TEST_REDIS_URL;
+  it.skipIf(!redisUrl)('counts failed logins per account in Redis', async () => {
+    const saved = { REDIS_URL: process.env.REDIS_URL, RATE_LIMIT_IN_TESTS: process.env.RATE_LIMIT_IN_TESTS, WORKERS: process.env.WORKERS };
+    Object.assign(process.env, { REDIS_URL: redisUrl, RATE_LIMIT_IN_TESTS: 'true', WORKERS: 'off' });
+    const limited = await createTestApp();
+    try {
+      const email = `limite${Date.now()}@test.cm`;
+      const statuses: number[] = [];
+      for (let i = 0; i < 11; i++) statuses.push((await limited.http.post('/api/auth/login').send({ email, password: 'mauvais' })).status);
+      expect(statuses.slice(0, 10).every((s) => s === 401)).toBe(true);
+      expect(statuses[10]).toBe(429);
+      // Another account from the same address is not blocked by this one.
+      expect((await limited.http.post('/api/auth/login').send({ email: `autre${email}`, password: 'mauvais' })).status).toBe(401);
+    } finally {
+      await limited.app.close();
+      for (const [k, v] of Object.entries(saved)) if (v === undefined) delete process.env[k]; else process.env[k] = v;
     }
   });
 });

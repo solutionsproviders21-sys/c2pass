@@ -23,4 +23,10 @@ describe('availability detection', () => {
     expect(detectAvailability('<p>Inscriptions ouvertes</p>', 'inscriptions ouvertes', 'complet')).toBe('open');
     expect(detectAvailability('<script>complet</script><p>Bientôt</p>', 'ouvert', 'complet')).toBe('unknown');
   });
+
+  it('gives up on a pathological pattern instead of freezing', () => {
+    const started = Date.now();
+    expect(detectAvailability(`<p>${'a'.repeat(40)}!</p>`, '(a+)+$', null)).toBe('unknown');
+    expect(Date.now() - started).toBeLessThan(2_000);
+  });
 });

@@ -45,7 +45,7 @@ export class AccountController {
   async me(@CurrentUser() user: AuthUser) {
     const { rows: [r] } = await this.pool.query(
       `SELECT u.id, u.email, u.role, u.totp_enabled AS "totpEnabled", u.plan_id AS "planId", u.plan_expires_at AS "planExpiresAt",
-              u.c2_guarantee_until AS "c2GuaranteeUntil", u.created_at AS "createdAt", u.password_hash IS NOT NULL AS "hasPassword",
+              u.c2_guarantee_until AS "c2GuaranteeUntil", u.created_at AS "createdAt", u.password_hash IS NOT NULL AS "hasPassword", u.email_verified_at IS NOT NULL AS "emailVerified",
               (u.google_id IS NOT NULL) AS "google", (u.facebook_id IS NOT NULL) AS "facebook",
               p.first_name AS "firstName", p.last_name AS "lastName", p.country, p.city, p.phone, p.whatsapp,
               p.target_score AS "targetScore", p.exam_date AS "examDate", p.marketing_consent AS "marketingConsent"

@@ -105,6 +105,20 @@ export class AuthController {
   }
 
   @Public()
+  @Post('email/verify')
+  @HttpCode(204)
+  async verifyEmail(@Body() body: unknown, @Req() req: Request) {
+    const { token } = z.object({ token: z.string().regex(/^[A-Za-z0-9_-]{20,128}$/) }).parse(body);
+    await this.auth.verifyEmail(token, clientIp(req));
+  }
+
+  @Post('email/resend')
+  @HttpCode(204)
+  async resendVerification(@CurrentUser() user: AuthUser) {
+    await this.auth.sendEmailVerification(user.id);
+  }
+
+  @Public()
   @Get('providers')
   providers() {
     return { oauth: this.oauth.enabled() };

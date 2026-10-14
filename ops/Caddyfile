@@ -1,0 +1,21 @@
+# Production entry point: HTTPS certificates (Let's Encrypt) are obtained and renewed automatically for $DOMAIN.
+{$DOMAIN} {
+	encode zstd gzip
+	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+
+	# The API directly (payments webhooks, OAuth callbacks, audio uploads); everything else is the website.
+	handle /api/* {
+		request_body {
+			max_size 30MB
+		}
+		reverse_proxy api:4000
+	}
+	handle {
+		reverse_proxy web:3000
+	}
+}
+
+# www.<domain> → <domain>
+www.{$DOMAIN} {
+	redir https://{$DOMAIN}{uri} permanent
+}

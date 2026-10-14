@@ -56,8 +56,9 @@ export async function seedContent(db: Db) {
 async function upsertUser(pool: pg.Pool, u: { email: string; role: string; plan: string; firstName: string; lastName: string; country: string; city: string; phone?: string }) {
   const hash = await argon2.hash(DEMO_PASSWORD, { type: argon2.argon2id });
   const { rows: [row] } = await pool.query<{ id: string }>(
-    `INSERT INTO users (email, password_hash, role, plan_id, plan_expires_at) VALUES ($1, $2, $3, $4, CASE WHEN $4 = 'free' THEN NULL ELSE now() + interval '30 days' END)
-     ON CONFLICT (lower(email)) WHERE status <> 'deleted' DO UPDATE SET role = EXCLUDED.role, plan_id = EXCLUDED.plan_id, plan_expires_at = EXCLUDED.plan_expires_at
+    `INSERT INTO users (email, password_hash, role, plan_id, plan_expires_at, email_verified_at) VALUES ($1, $2, $3, $4, CASE WHEN $4 = 'free' THEN NULL ELSE now() + interval '30 days' END, now())
+     ON CONFLICT (lower(email)) WHERE status <> 'deleted' DO UPDATE SET role = EXCLUDED.role, plan_id = EXCLUDED.plan_id, plan_expires_at = EXCLUDED.plan_expires_at,
+       email_verified_at = coalesce(users.email_verified_at, now())
      RETURNING id`,
     [u.email, hash, u.role, u.plan],
   );
@@ -69,7 +70,8 @@ async function upsertUser(pool: pg.Pool, u: { email: string; role: string; plan:
   return row.id;
 }
 
-export async function seed(pool: pg.Pool, db: Db) {
+/** Questions, fiches and centres; plus the demo accounts (known password) unless `demoAccounts` is false. */
+export async function seed(pool: pg.Pool, db: Db, { demoAccounts = true } = {}) {
   await migrate(pool);
   const content = await seedContent(db);
 
@@ -83,6 +85,8 @@ export async function seed(pool: pg.Pool, db: Db) {
       );
     }
   }
+
+  if (!demoAccounts) return { ...content, centres: CENTRES.length, users: null };
 
   const student = await upsertUser(pool, { email: 'etudiant@c2pass.cm', role: 'student', plan: 'free', firstName: 'Marie', lastName: 'Ngono', country: 'CM', city: 'Yaoundé', phone: '+237 690 00 00 01' });
   const premium = await upsertUser(pool, { email: 'premium@c2pass.cm', role: 'student', plan: 'pro', firstName: 'Jean', lastName: 'Mba', country: 'GA', city: 'Libreville', phone: '+241 77 00 00 02' });
@@ -121,9 +125,12 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const pool = createPool(cfg.DATABASE_URL);
   const client = await new MongoClient(cfg.MONGO_URL).connect();
   try {
-    const r = await seed(pool, client.db(cfg.MONGO_DB));
+    // Demo accounts share a published password: never on a production server unless explicitly asked.
+    const demoAccounts = cfg.NODE_ENV !== 'production' || process.env.SEED_DEMO_ACCOUNTS === 'true';
+    const r = await seed(pool, client.db(cfg.MONGO_DB), { demoAccounts });
     console.log(`Seed OK: ${r.questions} questions, ${r.courses} fiches, ${r.centres} centres.`);
-    console.log(`Comptes de démonstration (mot de passe ${DEMO_PASSWORD}) : etudiant@c2pass.cm (Gratuit), premium@c2pass.cm (Premium Pro), correcteur@c2pass.cm (correcteur), admin@c2pass.cm (admin, TOTP à configurer à la 1re connexion).`);
+    if (!demoAccounts) console.log('Production : aucun compte de démonstration créé. Créez l’administrateur avec : node dist/db/create-admin.js <email> <prénom> <nom>');
+    else console.log(`Comptes de démonstration (mot de passe ${DEMO_PASSWORD}) : etudiant@c2pass.cm (Gratuit), premium@c2pass.cm (Premium Pro), correcteur@c2pass.cm (correcteur), admin@c2pass.cm (admin, TOTP à configurer à la 1re connexion).`);
   } finally {
     await pool.end();
     await client.close();

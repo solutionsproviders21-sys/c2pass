@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import argon2 from 'argon2';
 import type pg from 'pg';
 import { signAccessToken, type Role } from '../../common/auth.js';
@@ -14,6 +14,8 @@ const REFRESH_TTL_DAYS = 30;
 const RESET_TTL_MINUTES = 60;
 /** Reset emails per account per hour, so the form cannot be used to flood an inbox. */
 const RESETS_PER_HOUR = 3;
+const VERIFY_TTL_HOURS = 48;
+const VERIFICATIONS_PER_HOUR = 3;
 
 export interface Tokens {
   accessToken: string;
@@ -43,6 +45,8 @@ export interface Fingerprint {
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger('Auth');
+
   constructor(
     @Inject(PG) private readonly pool: pg.Pool,
     @Inject(CONFIG) private readonly config: Config,
@@ -66,7 +70,47 @@ export class AuthService {
       );
       await audit(tx, { userId: user.id, actorId: user.id, action: 'account.created', meta: { method: 'email', consent: { terms: true, marketing: !!input.marketingConsent } }, ip: fp.ip });
       await this.recordSignal(tx, user.id, fp, 'register');
-      return this.issueTokens(tx, user.id, user.role);
+      return { userId: user.id, tokens: await this.issueTokens(tx, user.id, user.role) };
+    }).then(async ({ userId, tokens }) => {
+      // The account is usable right away; alerts and payments wait for the address to be confirmed.
+      await this.sendEmailVerification(userId).catch((e) => this.logger.warn(`verification e-mail failed: ${e instanceof Error ? e.message : e}`));
+      return tokens;
+    });
+  }
+
+  /** Sends a single-use confirmation link. Silent when already verified or when the hourly limit is reached. */
+  async sendEmailVerification(userId: string) {
+    const { rows: [u] } = await this.pool.query<{ email: string; first_name: string | null; email_verified_at: Date | null }>(
+      `SELECT u.email, p.first_name, u.email_verified_at FROM users u LEFT JOIN profiles p ON p.user_id = u.id WHERE u.id = $1 AND u.status = 'active'`,
+      [userId],
+    );
+    if (!u || u.email_verified_at) return;
+    const { rows: [{ n }] } = await this.pool.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM email_verifications WHERE user_id = $1 AND created_at > now() - interval '1 hour'`, [userId]);
+    if (n >= VERIFICATIONS_PER_HOUR) return;
+    const token = randomToken(32);
+    await this.pool.query(
+      `INSERT INTO email_verifications (user_id, token_hash, expires_at) VALUES ($1, $2, now() + make_interval(hours => $3))`,
+      [userId, sha256(token), VERIFY_TTL_HOURS],
+    );
+    await this.notifier.send({
+      channel: 'email',
+      to: u.email,
+      subject: 'C2Pass : confirmez votre adresse e-mail',
+      text: `Bonjour${u.first_name ? ` ${u.first_name}` : ''},\n\nBienvenue sur C2Pass ! Confirmez votre adresse en ouvrant ce lien (valable ${VERIFY_TTL_HOURS} heures). Cette confirmation est nécessaire pour recevoir les alertes d’ouverture des centres et pour souscrire une offre.`,
+      url: `${this.config.PUBLIC_WEB_URL}/verifier-email?jeton=${token}`,
+    });
+  }
+
+  async verifyEmail(token: string, ip: string | null) {
+    await withTransaction(this.pool, async (tx) => {
+      const { rows: [v] } = await tx.query<{ user_id: string }>(
+        `UPDATE email_verifications SET used_at = now() WHERE token_hash = $1 AND used_at IS NULL AND expires_at > now() RETURNING user_id`,
+        [sha256(token)],
+      );
+      if (!v) throw badRequest('verification_link_invalid', 'Ce lien a expiré ou a déjà été utilisé. Demandez-en un nouveau depuis votre tableau de bord.');
+      await tx.query('UPDATE users SET email_verified_at = coalesce(email_verified_at, now()) WHERE id = $1', [v.user_id]);
+      await audit(tx, { userId: v.user_id, actorId: v.user_id, action: 'email.verified', ip });
     });
   }
 
@@ -201,7 +245,8 @@ export class AuthService {
         [sha256(token)],
       );
       if (!r) throw badRequest('reset_link_invalid', 'Ce lien a expiré ou a déjà été utilisé. Demandez-en un nouveau.');
-      await tx.query(`UPDATE users SET password_hash = $2 WHERE id = $1 AND status = 'active'`, [r.user_id, hash]);
+      // Opening the e-mailed link also proves the address.
+      await tx.query(`UPDATE users SET password_hash = $2, email_verified_at = coalesce(email_verified_at, now()) WHERE id = $1 AND status = 'active'`, [r.user_id, hash]);
       await tx.query(`UPDATE password_resets SET used_at = now() WHERE user_id = $1 AND used_at IS NULL`, [r.user_id]);
       await tx.query('UPDATE refresh_tokens SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL', [r.user_id]);
       await audit(tx, { userId: r.user_id, actorId: r.user_id, action: 'password.reset', ip });
@@ -214,11 +259,11 @@ export class AuthService {
     return withTransaction(this.pool, async (tx) => {
       let { rows: [user] } = await tx.query<{ id: string; role: Role; status: string }>(`SELECT id, role, status FROM users WHERE ${column} = $1`, [identity.id]);
       if (!user) {
-        // Registration does not prove ownership of the address, the provider does. When the account was only ever
-        // used with a password, whoever created it may not own the mailbox (pre-registration hijack): the password,
+        // The provider proves ownership of the address. When the existing account never confirmed it, whoever
+        // created it may not own the mailbox (pre-registration hijack): the password,
         // the second factor and the open sessions are dropped, and the owner can set a new password from the profile.
         const { rows: [prior] } = await tx.query<{ id: string; unproven: boolean }>(
-          `SELECT id, (google_id IS NULL AND facebook_id IS NULL AND password_hash IS NOT NULL) AS unproven
+          `SELECT id, (email_verified_at IS NULL AND password_hash IS NOT NULL) AS unproven
              FROM users WHERE lower(email) = lower($1) AND status <> 'deleted' FOR UPDATE`,
           [identity.email],
         );
@@ -228,11 +273,14 @@ export class AuthService {
           await audit(tx, { userId: prior.id, actorId: prior.id, action: 'account.claimed_by_oauth', meta: { provider } });
         }
         if (prior) {
-          ({ rows: [user] } = await tx.query(`UPDATE users SET ${column} = $2 WHERE id = $1 RETURNING id, role, status`, [prior.id, identity.id]));
+          ({ rows: [user] } = await tx.query(
+            `UPDATE users SET ${column} = $2, email_verified_at = coalesce(email_verified_at, now()) WHERE id = $1 RETURNING id, role, status`,
+            [prior.id, identity.id],
+          ));
         }
       }
       if (!user) {
-        ({ rows: [user] } = await tx.query(`INSERT INTO users (email, ${column}) VALUES ($1, $2) RETURNING id, role, status`, [identity.email.toLowerCase(), identity.id]));
+        ({ rows: [user] } = await tx.query(`INSERT INTO users (email, ${column}, email_verified_at) VALUES ($1, $2, now()) RETURNING id, role, status`, [identity.email.toLowerCase(), identity.id]));
         await tx.query(`INSERT INTO profiles (user_id, first_name, last_name, terms_accepted_at) VALUES ($1, $2, $3, now())`, [user.id, identity.firstName, identity.lastName]);
         await audit(tx, { userId: user.id, actorId: user.id, action: 'account.created', meta: { method: provider } });
       }

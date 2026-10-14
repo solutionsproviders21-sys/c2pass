@@ -71,9 +71,9 @@ export function PublicFooter() {
         </div>
         <div className="text-sm">
           <p className="mb-2 font-semibold text-white">Confiance</p>
-          <p className="py-1">Données chiffrées (AES-256)</p>
-          <p className="py-1">Conforme RGPD</p>
-          <p className="py-1">Alertes légales, sans robot</p>
+          <Link href="/confidentialite" className="block py-1 hover:text-white">Confidentialité</Link>
+          <Link href="/conditions" className="block py-1 hover:text-white">Conditions d’utilisation</Link>
+          <Link href="/mentions-legales" className="block py-1 hover:text-white">Mentions légales</Link>
         </div>
       </div>
       <div className="border-t border-white/10 py-4 text-center text-xs text-navy-100/60">

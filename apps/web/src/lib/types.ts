@@ -12,6 +12,7 @@ export interface Me {
   c2GuaranteeUntil: string | null;
   createdAt: string;
   hasPassword: boolean;
+  emailVerified: boolean;
   google: boolean;
   facebook: boolean;
   firstName: string | null;

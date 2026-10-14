@@ -17,6 +17,9 @@ const schema = z.object({
   PUBLIC_WEB_URL: z.string().default('http://localhost:3000'),
   API_PUBLIC_URL: z.string().default('http://localhost:4000'),
   CORS_ORIGINS: z.string().default('http://localhost:3000'),
+  /** Reverse proxies in front of the API (1 = one proxy, e.g. Caddy or the Next.js server). */
+  TRUST_PROXY: z.coerce.number().int().min(0).max(5).default(1),
+  RATE_LIMIT_IN_TESTS: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),
 
   STORAGE_DIR: z.string().default('./storage'),
   S3_BUCKET: optional,

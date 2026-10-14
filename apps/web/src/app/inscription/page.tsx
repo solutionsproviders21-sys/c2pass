@@ -50,7 +50,7 @@ export default function Register() {
         <Field label="Téléphone (facultatif)" hint="Pour recevoir les alertes par SMS et WhatsApp."><Input type="tel" value={f.phone} onChange={set('phone')} placeholder="+237 6 99 00 00 00" /></Field>
         <label className="flex gap-2 text-sm">
           <input type="checkbox" required checked={f.acceptTerms} onChange={set('acceptTerms')} className="mt-0.5" />
-          <span>J’accepte les conditions d’utilisation et la politique de confidentialité (RGPD).</span>
+          <span>J’accepte les <Link href="/conditions" target="_blank" className="underline">conditions d’utilisation</Link> et la <Link href="/confidentialite" target="_blank" className="underline">politique de confidentialité</Link>.</span>
         </label>
         <label className="flex gap-2 text-sm text-muted">
           <input type="checkbox" checked={f.marketingConsent} onChange={set('marketingConsent')} className="mt-0.5" />

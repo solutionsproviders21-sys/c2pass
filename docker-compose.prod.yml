@@ -1,0 +1,35 @@
+# Production: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+# Only Caddy is exposed (ports 80 and 443, HTTPS automatic); the API and the site are reachable through it.
+services:
+  caddy:
+    image: caddy:2.11-alpine
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN:?Définissez DOMAIN dans .env (ex. c2pass.cm)}
+    ports: ["80:80", "443:443", "443:443/udp"]
+    volumes:
+      - ./ops/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddydata:/data
+      - caddyconfig:/config
+    depends_on: [api, web]
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
+
+  api:
+    ports: !reset []
+    environment:
+      PUBLIC_WEB_URL: https://${DOMAIN}
+      API_PUBLIC_URL: https://${DOMAIN}
+      CORS_ORIGINS: https://${DOMAIN}
+      TRUST_PROXY: 1
+
+  web:
+    ports: !reset []
+    build:
+      args:
+        NEXT_PUBLIC_SITE_URL: https://${DOMAIN}
+
+volumes:
+  caddydata:
+  caddyconfig:

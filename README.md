@@ -74,7 +74,9 @@ Les moyens de paiement sont Orange Money (Web Payment), MTN MoMo (Collection) et
 - **Anti-fraude** : empreinte du navigateur à la connexion et au début de chaque examen, et détection des appareils utilisés par plusieurs comptes.
 - **Droits RGPD** : chaque utilisateur peut exporter ses données en JSON ou supprimer son compte : effacement des données, des copies, des simulations et des fichiers audio eux-mêmes, et anonymisation des paiements.
 - **Journal d’audit** : accès au coffre-fort et actions des administrateurs.
-- **Protection de l’API** : en-têtes Helmet, CORS restreint et limitation du débit (connexion, paiement, rafraîchissement). Les compteurs sont gardés en mémoire, par processus : avec plusieurs serveurs d’API, il faut un stockage partagé (Redis).
+- **Adresse e-mail** : un lien de confirmation (valable 48 heures, 3 envois par heure au plus) est envoyé à l’inscription. Tant que l’adresse n’est pas confirmée, le compte peut s’entraîner mais ne peut ni payer ni s’abonner aux alertes.
+- **Protection de l’API** : en-têtes Helmet, CORS restreint et limitation du débit (inscription, connexion, paiement, rafraîchissement, formulaires). La connexion est aussi limitée par compte : 10 échecs en 15 minutes bloquent le compte visé, quelle que soit l’adresse IP. Les compteurs sont gardés dans Redis et donc partagés entre plusieurs serveurs d’API.
+- **Veille des centres** : les motifs saisis par les administrateurs sont exécutés avec une limite de 250 ms, pour qu’un motif mal écrit ne bloque pas l’API.
 - **Protection du site** : politique de sécurité du contenu (CSP) qui interdit les scripts et connexions vers d’autres sites.
 
 ## Architecture
@@ -93,7 +95,7 @@ apps/web          Next.js (App Router) + Tailwind CSS
 ```bash
 cp .env.example .env               # renseigner JWT_SECRET, VAULT_KEY, POSTGRES_PASSWORD, S3_SECRET_ACCESS_KEY, S3_SSE_KEY
 docker compose up -d --build
-docker compose exec api node dist/db/seed.js   # contenu de démonstration (une seule fois)
+docker compose exec -e SEED_DEMO_ACCOUNTS=true api node dist/db/seed.js   # contenu et comptes de démonstration (une seule fois)
 ```
 
 Le site est alors sur http://localhost:3000 et l’API sur http://localhost:4000/api/health.
@@ -120,7 +122,7 @@ L’intégration continue (`.github/workflows/ci.yml`) lance à chaque push la v
 
 ### Comptes de démonstration
 
-Tous les comptes ont le mot de passe `Demo1234!`.
+Tous les comptes ont le mot de passe `Demo1234!`. Ils ne sont pas créés quand `NODE_ENV=production` (sauf `SEED_DEMO_ACCOUNTS=true`, pour un serveur de démonstration).
 
 | E-mail | Rôle |
 |---|---|
@@ -130,6 +132,26 @@ Tous les comptes ont le mot de passe `Demo1234!`.
 | admin@c2pass.cm | administrateur ; la double authentification est configurée à la première connexion |
 
 ## Mettre en production
+
+### Déploiement
+
+Sur un serveur Linux avec Docker, et un nom de domaine dont l’enregistrement DNS pointe vers ce serveur :
+
+```bash
+cp .env.example .env     # DOMAIN, secrets, identité légale (LEGAL_*), clés des prestataires, NOTIFICATIONS_MODE=live + SMTP_URL
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+docker compose exec api node dist/db/seed.js                                   # banque de questions de départ, sans comptes de démonstration
+docker compose exec api node dist/db/create-admin.js admin@exemple.cm Prénom Nom   # affiche un mot de passe à usage unique
+```
+
+- **HTTPS** : Caddy (`ops/Caddyfile`) obtient et renouvelle seul le certificat Let’s Encrypt, sert le site et l’API sur le même domaine et redirige `www`. Seuls les ports 80 et 443 sont ouverts ; PostgreSQL, MongoDB, Redis, le stockage S3, l’API et le site ne sont pas joignables de l’extérieur.
+- **E-mails** : `NOTIFICATIONS_MODE=live` et un `SMTP_URL` valide sont indispensables, sinon les liens de confirmation d’adresse et de mot de passe oublié ne partent pas (ils sont seulement écrits dans le journal de l’API).
+- **Pages légales** : mentions légales, CGU et politique de confidentialité sont en ligne (`/mentions-legales`, `/conditions`, `/confidentialite`). L’identité de la société (`LEGAL_*`) est à renseigner avant la construction des images ; tant qu’elle manque, ces pages affichent « [à compléter] ». Les CGU proposent par défaut un remboursement sous 7 jours si l’offre n’a pas été utilisée et aucun renouvellement automatique : à faire valider par un juriste.
+- **Référencement** : `robots.txt`, `sitemap.xml` et les aperçus de partage (Open Graph) utilisent `DOMAIN`. Les espaces privés ne sont pas indexés.
+- **Sauvegardes** : `ops/backup.sh` sauvegarde PostgreSQL et MongoDB dans `backups/` et garde 14 jours. À lancer chaque nuit par cron (`0 3 * * * cd /srv/c2pass && ./ops/backup.sh`) et à copier hors du serveur. `ops/restore.sh <dossier>` restaure une sauvegarde. Les fichiers audio sont dans le volume du stockage S3, à sauvegarder avec le serveur ou à placer sur AWS S3 / Cloudflare R2.
+- **Journaux** : chaque service garde au plus 50 Mo de journaux (`docker compose logs`). Les services redémarrent seuls après une panne ou un redémarrage du serveur.
+
+### Avant l’ouverture
 
 1. **Contenu** : remplacer le contenu de démonstration (102 questions, 8 fiches) par la banque validée par l’expert pédagogique. L’objectif est de 5 000 questions ou plus, ajoutées par l’import JSON du back-office. Ajouter les enregistrements audio des documents de compréhension orale. Sans enregistrement, la voix de synthèse du navigateur lit la transcription une seule fois.
 2. **Centres** : renseigner pour chaque centre l’adresse, le téléphone, le lien d’inscription, l’URL surveillée et les motifs à détecter. Volontairement, aucune donnée non vérifiée n’est fournie.

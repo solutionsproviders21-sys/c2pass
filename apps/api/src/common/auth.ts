@@ -6,7 +6,7 @@ import jwt from 'jsonwebtoken';
 import type pg from 'pg';
 import { CONFIG, type Config } from '../config.js';
 import { PG } from '../infra/tokens.js';
-import { forbidden, unauthorized } from './errors.js';
+import { AppError, forbidden, unauthorized } from './errors.js';
 
 export type Role = 'student' | 'teacher' | 'admin';
 
@@ -16,6 +16,7 @@ export interface AuthUser {
   role: Role;
   plan: Plan;
   planExpiresAt: string | null;
+  emailVerified: boolean;
 }
 
 export interface AccessClaims {
@@ -63,8 +64,8 @@ export class AuthGuard implements CanActivate {
       if (isPublic) return true;
       throw unauthorized('Session expirée');
     }
-    const { rows: [u] } = await this.pool.query<{ id: string; email: string; role: Role; status: string; plan_id: string; plan_expires_at: Date | null }>(
-      `UPDATE users SET last_seen_at = now() WHERE id = $1 RETURNING id, email, role, status, plan_id, plan_expires_at`,
+    const { rows: [u] } = await this.pool.query<{ id: string; email: string; role: Role; status: string; plan_id: string; plan_expires_at: Date | null; email_verified_at: Date | null }>(
+      `UPDATE users SET last_seen_at = now() WHERE id = $1 RETURNING id, email, role, status, plan_id, plan_expires_at, email_verified_at`,
       [claims.sub],
     );
     if (!u || u.status !== 'active') throw unauthorized('Compte inactif');
@@ -74,6 +75,7 @@ export class AuthGuard implements CanActivate {
       role: u.role,
       plan: effectivePlan(u.plan_id, u.plan_expires_at),
       planExpiresAt: u.plan_expires_at?.toISOString() ?? null,
+      emailVerified: !!u.email_verified_at,
     };
     const roles = this.reflector.getAllAndOverride<Role[] | undefined>(ROLES_KEY, targets);
     if (roles && !roles.includes(u.role)) throw forbidden();
@@ -84,4 +86,9 @@ export class AuthGuard implements CanActivate {
 export function clientIp(req: Request): string | null {
   const ip = req.ip ?? null;
   return ip?.startsWith('::ffff:') ? ip.slice(7) : ip;
+}
+
+/** Alerts and payments go to a confirmed address only. */
+export function assertEmailVerified(user: AuthUser) {
+  if (!user.emailVerified) throw new AppError(403, 'email_not_verified', 'Confirmez d’abord votre adresse e-mail : ouvrez le lien reçu à l’inscription, ou demandez-en un nouveau depuis votre tableau de bord.');
 }

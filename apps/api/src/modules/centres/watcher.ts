@@ -4,6 +4,7 @@
  * - honours robots.txt for our user agent and identifies itself honestly;
  * - never submits forms, solves captchas or uses proxies: it only infers availability from page text.
  */
+import vm from 'node:vm';
 
 export interface RobotsRules {
   allows(path: string): boolean;
@@ -56,17 +57,27 @@ function matches(path: string, pattern: string): boolean {
   return re.test(path);
 }
 
+const MAX_PAGE_CHARS = 500_000;
+const REGEX_TIMEOUT_MS = 250;
+
 export type Availability = 'open' | 'full' | 'unknown';
 
 /** Infers availability from the public page text with the administrator-configured patterns. */
 export function detectAvailability(html: string, openPattern: string | null, fullPattern: string | null): Availability {
-  const text = html.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/gi, ' ').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ');
+  const text = html.slice(0, MAX_PAGE_CHARS).replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/gi, ' ').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ');
   const test = (p: string | null) => {
     if (!p) return false;
+    let re: RegExp;
     try {
-      return new RegExp(p, 'iu').test(text);
+      re = new RegExp(p, 'iu');
     } catch {
       return text.toLowerCase().includes(p.toLowerCase());
+    }
+    // Patterns are typed by administrators: a pathological one (catastrophic backtracking) must not freeze the API.
+    try {
+      return vm.runInNewContext('re.test(text)', { re, text }, { timeout: REGEX_TIMEOUT_MS }) === true;
+    } catch {
+      return false;
     }
   };
   // "Complet" wins over generic open wording that may remain on the page.

@@ -1,7 +1,14 @@
 # C2Pass : stack complète (cahier des charges §5). Lancer : docker compose up -d --build
 # puis, une seule fois : docker compose exec api node dist/db/seed.js
+# Logs are rotated so a long-running server never fills its disk.
+x-logging: &logging
+  driver: json-file
+  options: { max-size: "10m", max-file: "5" }
+
 services:
   postgres:
+    restart: unless-stopped
+    logging: *logging
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: c2pass
@@ -14,6 +21,8 @@ services:
       retries: 10
 
   mongo:
+    restart: unless-stopped
+    logging: *logging
     image: mongo:7
     volumes: [mongodata:/data/db]
     healthcheck:
@@ -22,12 +31,16 @@ services:
       retries: 10
 
   redis:
+    restart: unless-stopped
+    logging: *logging
     image: redis:7-alpine
     command: ["redis-server", "--appendonly", "yes"]
     volumes: [redisdata:/data]
 
   # Stockage objet compatible S3 (SeaweedFS). Les images MinIO ne sont plus publiées sur Docker Hub.
   s3:
+    restart: unless-stopped
+    logging: *logging
     image: chrislusf/seaweedfs:4.48
     command: server -dir=/data -s3 -s3.config=/etc/seaweedfs/s3.json
     environment:
@@ -53,6 +66,8 @@ services:
       echo 's3.bucket.list' | weed shell -master=s3:9333 2>/dev/null | grep -q c2pass-media; do sleep 2; done"
 
   api:
+    restart: unless-stopped
+    logging: *logging
     build: { context: ., dockerfile: apps/api/Dockerfile }
     env_file: [.env]
     environment:
@@ -70,13 +85,32 @@ services:
       redis: { condition: service_started }
       s3-init: { condition: service_completed_successfully }
     ports: ["4000:4000"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:4000/api/health >/dev/null"]
+      interval: 15s
+      start_period: 20s
+      retries: 5
 
   web:
+    restart: unless-stopped
+    logging: *logging
     build:
       context: .
       dockerfile: apps/web/Dockerfile
-      args: { API_URL: http://api:4000 }
-    depends_on: [api]
+      args:
+        API_URL: http://api:4000
+        # Public address and publisher identity shown on the legal pages (read when the site is built).
+        NEXT_PUBLIC_SITE_URL: ${PUBLIC_WEB_URL:-http://localhost:3000}
+        NEXT_PUBLIC_LEGAL_COMPANY: ${LEGAL_COMPANY:-}
+        NEXT_PUBLIC_LEGAL_FORM: ${LEGAL_FORM:-}
+        NEXT_PUBLIC_LEGAL_REGISTRATION: ${LEGAL_REGISTRATION:-}
+        NEXT_PUBLIC_LEGAL_ADDRESS: ${LEGAL_ADDRESS:-}
+        NEXT_PUBLIC_LEGAL_DIRECTOR: ${LEGAL_DIRECTOR:-}
+        NEXT_PUBLIC_LEGAL_HOST: ${LEGAL_HOST:-}
+        NEXT_PUBLIC_CONTACT_EMAIL: ${CONTACT_EMAIL:-}
+        NEXT_PUBLIC_PRIVACY_EMAIL: ${PRIVACY_EMAIL:-}
+    depends_on:
+      api: { condition: service_healthy }
     ports: ["3000:3000"]
 
 volumes:
