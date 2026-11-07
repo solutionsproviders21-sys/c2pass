@@ -133,7 +133,20 @@ Tous les comptes ont le mot de passe `Demo1234!`. Ils ne sont pas créés quand 
 
 ## Mettre en production
 
-### Déploiement
+### Installation en un script (recommandé)
+
+Sur un serveur neuf Ubuntu 24.04 avec 4 Go de mémoire (par exemple Hetzner CX22 ou un VPS OVH), en root :
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/solutionsproviders21-sys/c2pass/main/ops/install.sh -o install.sh
+ADMIN_EMAIL=vous@exemple.com ADMIN_PASSWORD='un mot de passe de 12 caractères ou plus' bash install.sh
+```
+
+On peut aussi coller `ops/install.sh`, variables remplies, dans le champ « User data / Cloud config » à la création du serveur. Le script installe Docker, génère les secrets dans `/opt/c2pass/.env`, lance le site en HTTPS, charge la banque de questions et crée le premier administrateur. Sans nom de domaine, le site répond sur `https://<ip-avec-tirets>.sslip.io`.
+
+Ensuite, le serveur se met à jour seul : toutes les 10 minutes, il récupère la branche `main` de GitHub et reconstruit ce qui a changé (`ops/update.sh`). Les réglages publics (domaine, identité légale) se changent dans `ops/site.env`, dans le dépôt. Les secrets (clés des prestataires, `SMTP_URL`) restent dans le `.env` du serveur. La sauvegarde des bases tourne chaque nuit.
+
+### Déploiement manuel
 
 Sur un serveur Linux avec Docker, et un nom de domaine dont l’enregistrement DNS pointe vers ce serveur :
 

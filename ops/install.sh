@@ -70,12 +70,11 @@ if [ -z "$DOMAIN" ]; then
 fi
 setenv NODE_ENV production
 setenv DOMAIN "$DOMAIN"
-setenv PUBLIC_WEB_URL "https://$DOMAIN"
-setenv API_PUBLIC_URL "https://$DOMAIN"
-setenv CORS_ORIGINS "https://$DOMAIN"
 if [ -n "$SMTP_URL" ]; then setenv SMTP_URL "$SMTP_URL"; setenv NOTIFICATIONS_MODE live; fi
-[ -n "$MAIL_FROM" ] && setenv MAIL_FROM "$MAIL_FROM"
-[ -n "$ADMIN_EMAIL" ] && setenv VAPID_SUBJECT "mailto:$ADMIN_EMAIL"
+if [ -n "$MAIL_FROM" ]; then setenv MAIL_FROM "$MAIL_FROM"; fi
+if [ -n "$ADMIN_EMAIL" ]; then setenv VAPID_SUBJECT "mailto:$ADMIN_EMAIL"; fi
+bash ops/apply-site-env.sh   # public settings tracked in the repository (domain, legal identity), and the URLs
+DOMAIN=$(getenv DOMAIN)
 
 # 5. Build and start (only Caddy listens on ports 80/443; HTTPS certificates are automatic)
 COMPOSE="docker compose -f docker-compose.yml -f docker-compose.prod.yml"
