@@ -2,6 +2,7 @@ import { createECDH, randomBytes } from 'node:crypto';
 import ece from 'http_ece';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { totpCode } from '../src/infra/crypto.js';
+import { RefundsService } from '../src/modules/billing/refunds.service.js';
 import { adminToken, auth, createTestApp, newStudent, setPlan, teacherToken, type TestContext } from './helpers.js';
 
 let ctx: TestContext;
@@ -263,6 +264,97 @@ describe('payments', () => {
     const after = await ctx.http.get('/api/me').set(auth(s.token));
     expect(after.body.plan.id).toBe('reussite');
     expect(after.body.c2GuaranteeUntil).toBeTruthy();
+  });
+});
+
+describe('refunds and renewal reminders', () => {
+  const pay = async (token: string, planId: string) =>
+    (await ctx.http.post('/api/payments/checkout').set(auth(token)).send({ planId, method: 'mtn_momo', phone: '+237 670 00 00 07' })).body.id as string;
+
+  it('refunds an unused offer within 7 days, once, and ends the offer', async () => {
+    const s = await newStudent(ctx);
+    const id = await pay(s.token, 'standard');
+    const check = await ctx.http.get(`/api/payments/${id}/refund`).set(auth(s.token));
+    expect(check.body).toMatchObject({ withdrawal: { eligible: true }, c2_guarantee: { eligible: false } });
+
+    const req = await ctx.http.post(`/api/payments/${id}/refund`).set(auth(s.token)).field('kind', 'withdrawal').field('reason', 'Je me suis trompé d’offre');
+    expect(req.status).toBe(201);
+    expect((await ctx.http.post(`/api/payments/${id}/refund`).set(auth(s.token)).field('kind', 'withdrawal')).status).toBe(422);
+
+    const admin = await adminToken(ctx);
+    expect((await ctx.http.get('/api/admin/refunds').set(auth(s.token))).status).toBe(403);
+    const list = await ctx.http.get('/api/admin/refunds?status=pending').set(auth(admin));
+    const mine = list.body.find((r: { paymentId: string }) => r.paymentId === id);
+    expect(mine).toMatchObject({ kind: 'withdrawal', email: s.email, amount: 9900 });
+    expect((await ctx.http.post(`/api/admin/refunds/${mine.id}/decision`).set(auth(admin)).send({ approve: false })).status).toBe(400); // a refusal needs a reason
+
+    ctx.notifier.sent.length = 0;
+    expect((await ctx.http.post(`/api/admin/refunds/${mine.id}/decision`).set(auth(admin)).send({ approve: true })).status).toBe(201);
+    expect((await ctx.http.post(`/api/admin/refunds/${mine.id}/decision`).set(auth(admin)).send({ approve: true })).status).toBe(409);
+    const me = await ctx.http.get('/api/me').set(auth(s.token));
+    expect(me.body.plan.id).toBe('free');
+    expect((await ctx.http.get(`/api/payments/${id}`).set(auth(s.token))).body.status).toBe('refunded');
+    expect(ctx.notifier.sent.some((m) => m.to === s.email && /remboursement est accepté/.test(m.subject ?? ''))).toBe(true);
+    const payments = await ctx.http.get(`/api/admin/payments?q=${encodeURIComponent(s.email)}`).set(auth(admin));
+    expect(payments.body[0]).toMatchObject({ id, status: 'refunded' });
+    const log = await ctx.http.get('/api/admin/audit?action=refund.').set(auth(admin));
+    expect(log.body.some((a: { action: string; userEmail: string }) => a.action === 'refund.approved' && a.userEmail === s.email)).toBe(true);
+  });
+
+  it('refuses a withdrawal once the offer was used, and the C2 guarantee before its conditions', async () => {
+    const s = await newStudent(ctx);
+    const id = await pay(s.token, 'reussite');
+    await ctx.pool.query(`INSERT INTO exam_sessions (user_id, type, skills, items, status, started_at) VALUES ($1, 'full', '{CO}', '{}', 'in_progress', now())`, [s.id]);
+    const check = (await ctx.http.get(`/api/payments/${id}/refund`).set(auth(s.token))).body;
+    expect(check.withdrawal).toMatchObject({ eligible: false, reason: expect.stringMatching(/utilisée/) });
+    expect(check.c2_guarantee).toMatchObject({ eligible: false, reason: expect.stringMatching(/90 jours/) });
+
+    // 3 months later, with 3 completed simulations and the official attestation.
+    await ctx.pool.query(`UPDATE payments SET confirmed_at = now() - interval '100 days' WHERE id = $1`, [id]);
+    await ctx.pool.query(`UPDATE exam_sessions SET started_at = now() - interval '50 days' WHERE user_id = $1`, [s.id]);
+    for (let i = 0; i < 3; i++) {
+      await ctx.pool.query(`INSERT INTO exam_sessions (user_id, type, skills, items, status, started_at, completed_at) VALUES ($1, 'full', '{CO,CE,EE,EO}', '{}', 'completed', now() - interval '40 days', now() - interval '40 days')`, [s.id]);
+    }
+    expect((await ctx.http.post(`/api/payments/${id}/refund`).set(auth(s.token)).field('kind', 'c2_guarantee')).status).toBe(400); // no attestation
+    expect((await ctx.http.post(`/api/payments/${id}/refund`).set(auth(s.token)).field('kind', 'c2_guarantee')
+      .attach('attestation', Buffer.from('<script>'), { filename: 'a.html', contentType: 'text/html' })).status).toBe(400);
+    const req = await ctx.http.post(`/api/payments/${id}/refund`).set(auth(s.token)).field('kind', 'c2_guarantee')
+      .attach('attestation', Buffer.from('%PDF-1.4 attestation'), { filename: 'attestation.pdf', contentType: 'application/pdf' });
+    expect(req.status).toBe(201);
+    const admin = await adminToken(ctx);
+    const file = await ctx.http.get(`/api/admin/refunds/${req.body.id}/attestation`).set(auth(admin));
+    expect(file.status).toBe(200);
+    expect(file.headers['content-type']).toMatch(/application\/pdf/);
+    expect((await ctx.http.get('/api/refunds').set(auth(s.token))).body[0]).toMatchObject({ kind: 'c2_guarantee', status: 'pending' });
+
+    // Erasing the account deletes the attestation file.
+    expect((await ctx.http.delete('/api/me').set(auth(s.token))).status).toBe(204);
+    expect((await ctx.http.get(`/api/admin/refunds/${req.body.id}/attestation`).set(auth(admin))).status).toBe(404);
+  });
+
+  it('lets an administrator refund a payment directly', async () => {
+    const s = await newStudent(ctx);
+    const id = await pay(s.token, 'pro');
+    const admin = await adminToken(ctx);
+    expect((await ctx.http.post(`/api/admin/payments/${id}/refund`).set(auth(admin)).send({ note: 'Geste commercial' })).status).toBe(201);
+    expect((await ctx.http.post(`/api/admin/payments/${id}/refund`).set(auth(admin)).send({})).status).toBe(409);
+    expect((await ctx.http.get('/api/me').set(auth(s.token))).body.plan.id).toBe('free');
+  });
+
+  it('reminds candidates once, 3 days before their offer ends', async () => {
+    const s = await newStudent(ctx);
+    await ctx.pool.query(`UPDATE users SET plan_id = 'standard', plan_expires_at = now() + interval '2 days' WHERE id = $1`, [s.id]);
+    const refunds = ctx.app.get(RefundsService);
+    ctx.notifier.sent.length = 0;
+    await refunds.sendRenewalReminders();
+    await refunds.sendRenewalReminders();
+    const mails = ctx.notifier.sent.filter((m) => m.to === s.email);
+    expect(mails).toHaveLength(1);
+    expect(mails[0]).toMatchObject({ subject: expect.stringMatching(/se termine bientôt/), url: expect.stringMatching(/\/tarifs\?renouveler=standard$/) });
+    // Renewing moves the expiry date: the next end of offer gets its own reminder.
+    await ctx.pool.query(`UPDATE users SET plan_expires_at = plan_expires_at + interval '1 day' WHERE id = $1`, [s.id]);
+    await refunds.sendRenewalReminders();
+    expect(ctx.notifier.sent.filter((m) => m.to === s.email)).toHaveLength(2);
   });
 });
 

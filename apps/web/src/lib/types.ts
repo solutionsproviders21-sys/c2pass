@@ -141,3 +141,17 @@ export interface CourseDetail extends Course { sections: { heading: string; body
 export type VaultData = Partial<Record<
   'lastName' | 'firstName' | 'birthDate' | 'birthPlace' | 'nationality' | 'gender' | 'passportNumber' | 'passportExpiry'
   | 'address' | 'city' | 'phone' | 'email' | 'motherTongue' | 'examReason', string>>;
+
+export type RefundKind = 'withdrawal' | 'c2_guarantee';
+export type RefundEligibility = Record<RefundKind, { eligible: boolean; reason?: string }>;
+export interface RefundRequest { id: string; paymentId: string; kind: RefundKind | 'admin'; status: 'pending' | 'approved' | 'rejected'; adminNote: string | null; createdAt: string; decidedAt: string | null }
+
+export interface AdminPayment {
+  id: string; planId: PlanId; amount: number; currency: string; method: Payment['method']; status: Payment['status'];
+  providerRef: string | null; createdAt: string; confirmedAt: string | null; userId: string; email: string;
+}
+export interface AdminRefund {
+  id: string; kind: RefundKind | 'admin'; status: RefundRequest['status']; reason: string | null; adminNote: string | null; createdAt: string; decidedAt: string | null;
+  hasAttestation: boolean; email: string; paymentId: string; planId: PlanId; amount: number; method: Payment['method']; paidAt: string | null;
+}
+export interface AuditEntry { id: string; action: string; meta: Record<string, unknown>; createdAt: string; ip: string | null; userEmail: string | null; actorEmail: string | null }

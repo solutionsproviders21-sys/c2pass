@@ -158,6 +158,11 @@ export class AccountController {
       await audit(tx, { userId: user.id, actorId: user.id, action: 'gdpr.erase', ip: clientIp(req) });
     });
     await this.content.writings.deleteMany({ userId: user.id });
+    // Refund attestations (official exam results) are personal documents too.
+    const { rows: attestations } = await this.pool.query<{ attestation_key: string }>(
+      'SELECT attestation_key FROM refund_requests WHERE user_id = $1 AND attestation_key IS NOT NULL', [user.id]);
+    for (const a of attestations) await this.storage.delete(a.attestation_key);
+    await this.pool.query('UPDATE refund_requests SET attestation_key = NULL, reason = NULL WHERE user_id = $1', [user.id]);
     // Voice recordings: the files themselves, not only their records.
     for (const a of await this.content.audios.find({ userId: user.id }, { projection: { key: 1 } }).toArray()) {
       if (a.key) await this.storage.delete(a.key);

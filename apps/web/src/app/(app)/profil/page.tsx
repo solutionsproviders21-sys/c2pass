@@ -5,13 +5,14 @@ import { Suspense, useEffect, useState } from 'react';
 import { CreditCard, Download, KeyRound, ShieldCheck, Smartphone, Trash2 } from 'lucide-react';
 import { COUNTRIES, PLANS, type PlanId } from '@c2pass/shared';
 import { PlanCards } from '@/components/plan-cards';
+import { RefundDialog } from '@/components/refund-dialog';
 import { TotpQr } from '@/components/totp-qr';
 import { Badge, Button, Card, cx, ErrorNotice, Field, Input, Notice, PageHeader, Select, Spinner } from '@/components/ui';
 import { api, setSession } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useAction, useLoad } from '@/lib/hooks';
 import { date, dateTime, money } from '@/lib/format';
-import type { Me, Payment, Tokens } from '@/lib/types';
+import type { Me, Payment, RefundRequest, Tokens } from '@/lib/types';
 
 const METHODS = [
   { id: 'orange_money', label: 'Orange Money', color: '#ff7900' },
@@ -27,6 +28,8 @@ function Profile() {
   const router = useRouter();
   const offer = useSearchParams().get('offre') as PlanId | null;
   const payments = useLoad(() => api.get<Payment[]>('/payments'));
+  const refunds = useLoad(() => api.get<RefundRequest[]>('/refunds'));
+  const [refundFor, setRefundFor] = useState<Payment | null>(null);
   const [checkoutPlan, setCheckoutPlan] = useState<PlanId | null>(offer && offer in PLANS && offer !== 'free' ? offer : null);
 
   if (!me) return <Spinner />;
@@ -48,9 +51,12 @@ function Profile() {
           {(payments.data ?? []).length === 0 ? <p className="mt-1 text-sm text-muted">Aucun paiement.</p> : (
             <ul className="mt-2 divide-y divide-line text-sm">
               {payments.data!.map((p) => (
-                <li key={p.id} className="flex items-center justify-between py-2">
-                  <span>{PLANS[p.planId]?.name} · {money(p.amount)}</span>
-                  <span className="flex items-center gap-2 text-xs text-muted">{dateTime(p.createdAt)} <Badge tone={PAYMENT_STATUS[p.status][1]}>{PAYMENT_STATUS[p.status][0]}</Badge></span>
+                <li key={p.id} className="py-2">
+                  <div className="flex items-center justify-between">
+                    <span>{PLANS[p.planId]?.name} · {money(p.amount)}</span>
+                    <span className="flex items-center gap-2 text-xs text-muted">{dateTime(p.createdAt)} <Badge tone={PAYMENT_STATUS[p.status][1]}>{PAYMENT_STATUS[p.status][0]}</Badge></span>
+                  </div>
+                  <RefundLine payment={p} request={refunds.data?.find((r) => r.paymentId === p.id)} onAsk={() => setRefundFor(p)} />
                 </li>
               ))}
             </ul>
@@ -60,6 +66,7 @@ function Profile() {
 
       <h2 className="mt-8 text-lg font-bold text-navy-900">Changer d’offre</h2>
       <div className="mt-3"><PlanCards current={me.plan.id} onChoose={setCheckoutPlan} /></div>
+      {refundFor && <RefundDialog payment={refundFor} onClose={() => setRefundFor(null)} onSent={() => { setRefundFor(null); void refunds.reload(); }} />}
       {checkoutPlan && <Checkout planId={checkoutPlan} me={me} onClose={() => setCheckoutPlan(null)} onPaid={(id) => router.push(`/paiement/${id}`)} />}
 
       <div className="mt-8 grid gap-4 lg:grid-cols-2">
@@ -112,6 +119,14 @@ function ProfileForm({ me, onSaved }: { me: Me; onSaved: () => Promise<unknown> 
       </form>
     </Card>
   );
+}
+
+const REFUND_STATUS: Record<RefundRequest['status'], string> = { pending: 'Demande de remboursement en cours d’examen', approved: 'Remboursement accepté', rejected: 'Demande de remboursement refusée' };
+
+function RefundLine({ payment, request, onAsk }: { payment: Payment; request?: RefundRequest; onAsk: () => void }) {
+  const status = request && <p className="mt-1 text-xs text-muted">{REFUND_STATUS[request.status]}{request.adminNote ? ` : ${request.adminNote}` : ''}</p>;
+  if (payment.status !== 'succeeded' || (request && request.status !== 'rejected')) return status ?? null;
+  return <>{status}<button onClick={onAsk} className="mt-1 text-xs font-medium text-navy-700 underline">Demander un remboursement</button></>;
 }
 
 function Checkout({ planId, me, onClose, onPaid }: { planId: PlanId; me: Me; onClose: () => void; onPaid: (id: string) => void }) {

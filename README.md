@@ -62,6 +62,10 @@ Ce dépôt couvre la plateforme web décrite dans le cahier des charges (« c2pa
 
 Les moyens de paiement sont Orange Money (Web Payment), MTN MoMo (Collection) et Stripe pour la carte bancaire, en XAF.
 
+- **Remboursements** : depuis son profil, l’élève demande le remboursement d’un paiement sous 7 jours s’il n’a pas utilisé l’offre (ni simulation, ni correction humaine). La **garantie C2** du Pack Réussite se demande entre 3 et 9 mois après l’achat, après au moins 3 simulations complètes, avec l’attestation officielle du TCF en pièce jointe. L’administrateur accepte ou refuse chaque demande (page *Paiements & remboursements*), et peut aussi rembourser directement. Un paiement remboursé rend l’offre gratuite. Le remboursement d’argent lui-même se fait chez le prestataire (Orange Money, MTN, Stripe).
+- **Rappel de renouvellement** : un e-mail part 3 jours avant la fin d’une offre, une seule fois par échéance.
+- **Journal d’audit** : créations de compte, sécurité (double authentification, mots de passe, jeton volé), accès au coffre-fort, offres activées, remboursements, export et effacement RGPD, et actions des administrateurs, consultables et filtrables dans le back-office.
+
 ## Sécurité et RGPD
 
 - **Mots de passe** : hachés avec Argon2id. Un mot de passe oublié se réinitialise par un lien reçu par e-mail, valable 60 minutes et utilisable une seule fois ; la réinitialisation ferme toutes les sessions ouvertes.
@@ -161,7 +165,7 @@ docker compose exec api node dist/db/create-admin.js admin@exemple.cm Prénom No
 - **E-mails** : `NOTIFICATIONS_MODE=live` et un `SMTP_URL` valide sont indispensables, sinon les liens de confirmation d’adresse et de mot de passe oublié ne partent pas (ils sont seulement écrits dans le journal de l’API).
 - **Pages légales** : mentions légales, CGU et politique de confidentialité sont en ligne (`/mentions-legales`, `/conditions`, `/confidentialite`). L’identité de la société (`LEGAL_*`) est à renseigner avant la construction des images ; tant qu’elle manque, ces pages affichent « [à compléter] ». Les CGU proposent par défaut un remboursement sous 7 jours si l’offre n’a pas été utilisée et aucun renouvellement automatique : à faire valider par un juriste.
 - **Référencement** : `robots.txt`, `sitemap.xml` et les aperçus de partage (Open Graph) utilisent `DOMAIN`. Les espaces privés ne sont pas indexés.
-- **Sauvegardes** : `ops/backup.sh` sauvegarde PostgreSQL et MongoDB dans `backups/` et garde 14 jours. À lancer chaque nuit par cron (`0 3 * * * cd /srv/c2pass && ./ops/backup.sh`) et à copier hors du serveur. `ops/restore.sh <dossier>` restaure une sauvegarde. Les fichiers audio sont dans le volume du stockage S3, à sauvegarder avec le serveur ou à placer sur AWS S3 / Cloudflare R2.
+- **Sauvegardes** : chaque nuit, `ops/backup.sh` sauvegarde PostgreSQL, MongoDB et les fichiers stockés (enregistrements, attestations) dans `backups/AAAAMMJJ-HHMMSS/`, chiffrés avec `BACKUP_PASSPHRASE`, et garde 14 jours. Avec `BACKUP_S3_BUCKET` (AWS S3, Cloudflare R2, Backblaze B2…), chaque sauvegarde est aussi copiée hors du serveur. Le 1er de chaque mois, `ops/restore-test.sh` restaure la dernière sauvegarde dans des conteneurs jetables et vérifie son contenu (`backups/restore-test.log`). `ops/restore.sh <dossier>` restaure une sauvegarde sur le site.
 - **Journaux** : chaque service garde au plus 50 Mo de journaux (`docker compose logs`). Les services redémarrent seuls après une panne ou un redémarrage du serveur.
 
 ### Avant l’ouverture
@@ -169,4 +173,4 @@ docker compose exec api node dist/db/create-admin.js admin@exemple.cm Prénom No
 1. **Contenu** : remplacer le contenu de démonstration (102 questions, 8 fiches) par la banque validée par l’expert pédagogique. L’objectif est de 5 000 questions ou plus, ajoutées par l’import JSON du back-office. Ajouter les enregistrements audio des documents de compréhension orale. Sans enregistrement, la voix de synthèse du navigateur lit la transcription une seule fois.
 2. **Centres** : renseigner pour chaque centre l’adresse, le téléphone, le lien d’inscription, l’URL surveillée et les motifs à détecter. Volontairement, aucune donnée non vérifiée n’est fournie.
 3. **Clés des prestataires** : ajouter les clés OpenAI, LanguageTool, Twilio, WhatsApp Cloud, Orange Money, MTN MoMo, Stripe, Google et Facebook dans `.env`, ainsi que les clés VAPID des notifications (`npx web-push generate-vapid-keys`). Chaque service reste en mode démonstration tant que sa clé est absente, sauf les paiements : en `PAYMENTS_MODE=live`, un moyen de paiement sans clés est simplement indisponible.
-4. **Garder la clé du coffre-fort** : sauvegarder `VAULT_KEY` hors du serveur. Une clé perdue rend les coffres-forts illisibles.
+4. **Garder les clés** : copier `VAULT_KEY`, `S3_SSE_KEY` et `BACKUP_PASSPHRASE` hors du serveur. Une clé perdue rend les coffres-forts, les enregistrements ou les sauvegardes illisibles.

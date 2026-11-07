@@ -67,6 +67,8 @@ main() {
     setenv ALLOW_SANDBOX_PAYMENTS false
     setenv SEED_DEMO_ACCOUNTS false
   fi
+  # Backups are encrypted; servers installed before this setting existed get a passphrase too.
+  [ -n "$(getenv BACKUP_PASSPHRASE)" ] || setenv BACKUP_PASSPHRASE "$(openssl rand -base64 33 | tr -d '\n')"
   if [ -z "$DOMAIN" ]; then
     DOMAIN=$(getenv DOMAIN)
     case "$DOMAIN" in ""|c2pass.cm) IP=$(curl -fsS4 https://api.ipify.org || hostname -I | awk '{print $1}'); DOMAIN="${IP//./-}.sslip.io";; esac
@@ -85,14 +87,17 @@ main() {
   echo "Attente du démarrage de l’API..."
   for _ in $(seq 60); do $COMPOSE exec -T api wget -qO- http://localhost:4000/api/health >/dev/null 2>&1 && break; sleep 5; done
 
-  # 6. First install: browser notification keys, question bank, first administrator
+  # 6. Browser notification keys, question bank, first administrator
   if [ -z "$(getenv VAPID_PUBLIC_KEY)" ]; then
     KEYS=$($COMPOSE exec -T api node -e "import('web-push').then((m) => { const k = (m.default ?? m).generateVAPIDKeys(); console.log(k.publicKey + ' ' + k.privateKey); })")
     setenv VAPID_PUBLIC_KEY "${KEYS%% *}"; setenv VAPID_PRIVATE_KEY "${KEYS##* }"
     $COMPOSE up -d api
   fi
+  # Starter question bank and centres, only while the bank is empty (the seed would overwrite edited questions).
+  MONGO_DB=$(getenv MONGO_DB || true)
+  QUESTIONS=$($COMPOSE exec -T mongo mongosh "${MONGO_DB:-c2pass}" --quiet --eval 'db.questions.estimatedDocumentCount()' 2>/dev/null | tail -1 || true)
+  if [ "${QUESTIONS:-0}" = 0 ]; then $COMPOSE exec -T api node dist/db/seed.js; fi
   if [ "$FIRST_INSTALL" = 1 ]; then
-    $COMPOSE exec -T api node dist/db/seed.js
     if [ -n "$ADMIN_EMAIL" ]; then
       if [ -n "$ADMIN_PASSWORD" ]; then
         $COMPOSE exec -T -e ADMIN_PASSWORD="$ADMIN_PASSWORD" api node dist/db/create-admin.js "$ADMIN_EMAIL" "$ADMIN_FIRST_NAME" "$ADMIN_LAST_NAME" || true
@@ -125,10 +130,13 @@ EOF
   systemctl daemon-reload
   systemctl enable --now c2pass-update.timer
   fi
-  echo "30 2 * * * root cd $DIR && COMPOSE='$COMPOSE' ops/backup.sh >> $DIR/backups/backup.log 2>&1" > /etc/cron.d/c2pass-backup
+  printf '%s\n' \
+    "30 2 * * * root cd $DIR && COMPOSE='$COMPOSE' bash ops/backup.sh >> $DIR/backups/backup.log 2>&1" \
+    "0 5 1 * * root cd $DIR && bash ops/restore-test.sh >> $DIR/backups/restore-test.log 2>&1" > /etc/cron.d/c2pass-backup
   mkdir -p "$DIR/backups"
 
   echo "== C2Pass est en ligne : https://$DOMAIN"
+  echo "Important : copiez hors du serveur VAULT_KEY, S3_SSE_KEY et BACKUP_PASSPHRASE (fichier $DIR/.env). Sans elles, les sauvegardes sont illisibles."
   [ -n "$SMTP_URL" ] || echo "Attention : aucun SMTP_URL, les e-mails (confirmation d’adresse, mot de passe oublié) ne partent pas."
 }
 main "$@" < /dev/null

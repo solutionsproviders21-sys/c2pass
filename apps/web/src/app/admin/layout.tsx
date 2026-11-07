@@ -1,6 +1,6 @@
 'use client';
 
-import { BarChart3, ClipboardCheck, FileQuestion, LayoutDashboard, MapPin, ShieldAlert, Users } from 'lucide-react';
+import { BarChart3, ClipboardCheck, FileQuestion, LayoutDashboard, MapPin, Receipt, ScrollText, ShieldAlert, Users } from 'lucide-react';
 import Link from 'next/link';
 import { Shell, type NavItem } from '@/components/app-shell';
 import { RequireAuth } from '@/components/require-auth';
@@ -12,7 +12,9 @@ const ADMIN_NAV: NavItem[] = [
   { href: '/admin/questions', label: 'Banque de questions', icon: FileQuestion },
   { href: '/admin/corrections', label: 'Corrections humaines', icon: ClipboardCheck },
   { href: '/admin/utilisateurs', label: 'Utilisateurs', icon: Users },
+  { href: '/admin/paiements', label: 'Paiements & remboursements', icon: Receipt },
   { href: '/admin/fraude', label: 'Anti-fraude', icon: ShieldAlert },
+  { href: '/admin/journal', label: 'Journal d’audit', icon: ScrollText },
 ];
 const TEACHER_NAV: NavItem[] = [{ href: '/admin/corrections', label: 'Corrections à faire', icon: ClipboardCheck }];
 
