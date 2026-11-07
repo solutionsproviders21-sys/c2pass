@@ -12,3 +12,4 @@ storage-test/
 dump.rdb
 state.json
 backups/
+*.whl
