@@ -25,83 +25,86 @@ BRANCH=${BRANCH:-main}
 DIR=${DIR:-/opt/c2pass}
 
 set -euo pipefail
-exec > >(tee -a /var/log/c2pass-install.log) 2>&1
-echo "== C2Pass : installation $(date -u +%FT%TZ)"
-[ "$(id -u)" = 0 ] || { echo "À lancer en root (sudo)." >&2; exit 1; }
-export DEBIAN_FRONTEND=noninteractive
+# Everything runs inside main: bash parses the whole file first, so it also works through "curl ... | bash"
+# (docker compose exec would otherwise read the rest of the script from stdin).
+main() {
+  exec > >(tee -a /var/log/c2pass-install.log) 2>&1
+  echo "== C2Pass : installation $(date -u +%FT%TZ)"
+  [ "$(id -u)" = 0 ] || { echo "À lancer en root (sudo)." >&2; exit 1; }
+  export DEBIAN_FRONTEND=noninteractive
 
-# 1. System packages and Docker
-apt-get update -q
-apt-get install -yq ca-certificates curl git openssl
-command -v docker >/dev/null || curl -fsSL https://get.docker.com | sh
-[ -d /run/systemd/system ] && systemctl enable --now docker
+  # 1. System packages and Docker
+  apt-get update -q
+  apt-get install -yq ca-certificates curl git openssl
+  command -v docker >/dev/null || curl -fsSL https://get.docker.com | sh
+  [ -d /run/systemd/system ] && systemctl enable --now docker
 
-# 2. Swap: building the site needs more memory than running it
-if ! swapon --show 2>/dev/null | grep -q . && [ ! -f /swapfile ]; then
-  { fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile \
-    && echo '/swapfile none swap sw 0 0' >> /etc/fstab; } || echo "Swap non créé (continuer sans)."
-fi
+  # 2. Swap: building the site needs more memory than running it
+  if ! swapon --show 2>/dev/null | grep -q . && [ ! -f /swapfile ]; then
+    { fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile \
+      && echo '/swapfile none swap sw 0 0' >> /etc/fstab; } || echo "Swap non créé (continuer sans)."
+  fi
 
-# 3. Code
-if [ -d "$DIR/.git" ]; then git -C "$DIR" fetch -q origin "$BRANCH" && git -C "$DIR" reset -q --hard "origin/$BRANCH"
-else git clone -q --branch "$BRANCH" "$REPO" "$DIR"; fi
-cd "$DIR"
+  # 3. Code
+  if [ -d "$DIR/.git" ]; then git -C "$DIR" fetch -q origin "$BRANCH" && git -C "$DIR" reset -q --hard "origin/$BRANCH"
+  else git clone -q --branch "$BRANCH" "$REPO" "$DIR"; fi
+  cd "$DIR"
 
-# 4. Configuration (.env), generated once with fresh secrets
-setenv() { if grep -q "^$1=" .env; then sed -i "s|^$1=.*|$1=$(printf '%s' "$2" | sed 's/[|&\\]/\\&/g')|" .env; else printf '%s=%s\n' "$1" "$2" >> .env; fi; }
-getenv() { grep "^$1=" .env | head -1 | cut -d= -f2-; }
-FIRST_INSTALL=0
-if [ ! -f .env ]; then
-  FIRST_INSTALL=1
-  cp .env.example .env && chmod 600 .env
-  setenv JWT_SECRET "$(openssl rand -base64 48 | tr -d '\n')"
-  setenv VAULT_KEY "$(openssl rand -base64 32 | tr -d '\n')"
-  setenv POSTGRES_PASSWORD "$(openssl rand -hex 24)"
-  setenv S3_SECRET_ACCESS_KEY "$(openssl rand -hex 24)"
-  setenv S3_SSE_KEY "$(openssl rand -hex 32)"
-  setenv PAYMENTS_WEBHOOK_SECRET "$(openssl rand -hex 24)"
-  setenv PAYMENTS_MODE live
-  setenv ALLOW_SANDBOX_PAYMENTS false
-  setenv SEED_DEMO_ACCOUNTS false
-fi
-if [ -z "$DOMAIN" ]; then
+  # 4. Configuration (.env), generated once with fresh secrets
+  setenv() { if grep -q "^$1=" .env; then sed -i "s|^$1=.*|$1=$(printf '%s' "$2" | sed 's/[|&\\]/\\&/g')|" .env; else printf '%s=%s\n' "$1" "$2" >> .env; fi; }
+  getenv() { grep "^$1=" .env | head -1 | cut -d= -f2-; }
+  FIRST_INSTALL=0
+  if [ ! -f .env ]; then
+    FIRST_INSTALL=1
+    cp .env.example .env && chmod 600 .env
+    setenv JWT_SECRET "$(openssl rand -base64 48 | tr -d '\n')"
+    setenv VAULT_KEY "$(openssl rand -base64 32 | tr -d '\n')"
+    setenv POSTGRES_PASSWORD "$(openssl rand -hex 24)"
+    setenv S3_SECRET_ACCESS_KEY "$(openssl rand -hex 24)"
+    setenv S3_SSE_KEY "$(openssl rand -hex 32)"
+    setenv PAYMENTS_WEBHOOK_SECRET "$(openssl rand -hex 24)"
+    setenv PAYMENTS_MODE live
+    setenv ALLOW_SANDBOX_PAYMENTS false
+    setenv SEED_DEMO_ACCOUNTS false
+  fi
+  if [ -z "$DOMAIN" ]; then
+    DOMAIN=$(getenv DOMAIN)
+    case "$DOMAIN" in ""|c2pass.cm) IP=$(curl -fsS4 https://api.ipify.org || hostname -I | awk '{print $1}'); DOMAIN="${IP//./-}.sslip.io";; esac
+  fi
+  setenv NODE_ENV production
+  setenv DOMAIN "$DOMAIN"
+  if [ -n "$SMTP_URL" ]; then setenv SMTP_URL "$SMTP_URL"; setenv NOTIFICATIONS_MODE live; fi
+  if [ -n "$MAIL_FROM" ]; then setenv MAIL_FROM "$MAIL_FROM"; fi
+  if [ -n "$ADMIN_EMAIL" ]; then setenv VAPID_SUBJECT "mailto:$ADMIN_EMAIL"; fi
+  bash ops/apply-site-env.sh   # public settings tracked in the repository (domain, legal identity), and the URLs
   DOMAIN=$(getenv DOMAIN)
-  case "$DOMAIN" in ""|c2pass.cm) IP=$(curl -fsS4 https://api.ipify.org || hostname -I | awk '{print $1}'); DOMAIN="${IP//./-}.sslip.io";; esac
-fi
-setenv NODE_ENV production
-setenv DOMAIN "$DOMAIN"
-if [ -n "$SMTP_URL" ]; then setenv SMTP_URL "$SMTP_URL"; setenv NOTIFICATIONS_MODE live; fi
-if [ -n "$MAIL_FROM" ]; then setenv MAIL_FROM "$MAIL_FROM"; fi
-if [ -n "$ADMIN_EMAIL" ]; then setenv VAPID_SUBJECT "mailto:$ADMIN_EMAIL"; fi
-bash ops/apply-site-env.sh   # public settings tracked in the repository (domain, legal identity), and the URLs
-DOMAIN=$(getenv DOMAIN)
 
-# 5. Build and start (only Caddy listens on ports 80/443; HTTPS certificates are automatic)
-COMPOSE="docker compose -f docker-compose.yml -f docker-compose.prod.yml"
-$COMPOSE up -d --build --remove-orphans
-echo "Attente du démarrage de l’API..."
-for _ in $(seq 60); do $COMPOSE exec -T api wget -qO- http://localhost:4000/api/health >/dev/null 2>&1 && break; sleep 5; done
+  # 5. Build and start (only Caddy listens on ports 80/443; HTTPS certificates are automatic)
+  COMPOSE="docker compose -f docker-compose.yml -f docker-compose.prod.yml"
+  $COMPOSE up -d --build --remove-orphans
+  echo "Attente du démarrage de l’API..."
+  for _ in $(seq 60); do $COMPOSE exec -T api wget -qO- http://localhost:4000/api/health >/dev/null 2>&1 && break; sleep 5; done
 
-# 6. First install: browser notification keys, question bank, first administrator
-if [ -z "$(getenv VAPID_PUBLIC_KEY)" ]; then
-  KEYS=$($COMPOSE exec -T api node -e "import('web-push').then((m) => { const k = (m.default ?? m).generateVAPIDKeys(); console.log(k.publicKey + ' ' + k.privateKey); })")
-  setenv VAPID_PUBLIC_KEY "${KEYS%% *}"; setenv VAPID_PRIVATE_KEY "${KEYS##* }"
-  $COMPOSE up -d api
-fi
-if [ "$FIRST_INSTALL" = 1 ]; then
-  $COMPOSE exec -T api node dist/db/seed.js
-  if [ -n "$ADMIN_EMAIL" ]; then
-    if [ -n "$ADMIN_PASSWORD" ]; then
-      $COMPOSE exec -T -e ADMIN_PASSWORD="$ADMIN_PASSWORD" api node dist/db/create-admin.js "$ADMIN_EMAIL" "$ADMIN_FIRST_NAME" "$ADMIN_LAST_NAME" || true
-    else
-      $COMPOSE exec -T api node dist/db/create-admin.js "$ADMIN_EMAIL" "$ADMIN_FIRST_NAME" "$ADMIN_LAST_NAME" || true
+  # 6. First install: browser notification keys, question bank, first administrator
+  if [ -z "$(getenv VAPID_PUBLIC_KEY)" ]; then
+    KEYS=$($COMPOSE exec -T api node -e "import('web-push').then((m) => { const k = (m.default ?? m).generateVAPIDKeys(); console.log(k.publicKey + ' ' + k.privateKey); })")
+    setenv VAPID_PUBLIC_KEY "${KEYS%% *}"; setenv VAPID_PRIVATE_KEY "${KEYS##* }"
+    $COMPOSE up -d api
+  fi
+  if [ "$FIRST_INSTALL" = 1 ]; then
+    $COMPOSE exec -T api node dist/db/seed.js
+    if [ -n "$ADMIN_EMAIL" ]; then
+      if [ -n "$ADMIN_PASSWORD" ]; then
+        $COMPOSE exec -T -e ADMIN_PASSWORD="$ADMIN_PASSWORD" api node dist/db/create-admin.js "$ADMIN_EMAIL" "$ADMIN_FIRST_NAME" "$ADMIN_LAST_NAME" || true
+      else
+        $COMPOSE exec -T api node dist/db/create-admin.js "$ADMIN_EMAIL" "$ADMIN_FIRST_NAME" "$ADMIN_LAST_NAME" || true
+      fi
     fi
   fi
-fi
 
-# 7. Automatic updates (every 10 minutes, from GitHub) and nightly backups
-if [ -d /run/systemd/system ]; then
-cat > /etc/systemd/system/c2pass-update.service <<EOF
+  # 7. Automatic updates (every 10 minutes, from GitHub) and nightly backups
+  if [ -d /run/systemd/system ]; then
+  cat > /etc/systemd/system/c2pass-update.service <<EOF
 [Unit]
 Description=Mise à jour de C2Pass depuis GitHub
 After=docker.service network-online.target
@@ -110,7 +113,7 @@ Type=oneshot
 Environment=DIR=$DIR BRANCH=$BRANCH
 ExecStart=$DIR/ops/update.sh
 EOF
-cat > /etc/systemd/system/c2pass-update.timer <<'EOF'
+  cat > /etc/systemd/system/c2pass-update.timer <<'EOF'
 [Unit]
 Description=Mise à jour de C2Pass toutes les 10 minutes
 [Timer]
@@ -119,11 +122,13 @@ OnUnitActiveSec=10min
 [Install]
 WantedBy=timers.target
 EOF
-systemctl daemon-reload
-systemctl enable --now c2pass-update.timer
-fi
-echo "30 2 * * * root cd $DIR && COMPOSE='$COMPOSE' ops/backup.sh >> $DIR/backups/backup.log 2>&1" > /etc/cron.d/c2pass-backup
-mkdir -p "$DIR/backups"
+  systemctl daemon-reload
+  systemctl enable --now c2pass-update.timer
+  fi
+  echo "30 2 * * * root cd $DIR && COMPOSE='$COMPOSE' ops/backup.sh >> $DIR/backups/backup.log 2>&1" > /etc/cron.d/c2pass-backup
+  mkdir -p "$DIR/backups"
 
-echo "== C2Pass est en ligne : https://$DOMAIN"
-[ -n "$SMTP_URL" ] || echo "Attention : aucun SMTP_URL, les e-mails (confirmation d’adresse, mot de passe oublié) ne partent pas."
+  echo "== C2Pass est en ligne : https://$DOMAIN"
+  [ -n "$SMTP_URL" ] || echo "Attention : aucun SMTP_URL, les e-mails (confirmation d’adresse, mot de passe oublié) ne partent pas."
+}
+main "$@" < /dev/null
