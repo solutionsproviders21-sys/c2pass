@@ -10,7 +10,7 @@ import { useAction, useLoad } from '@/lib/hooks';
 import { dateTime, money } from '@/lib/format';
 import type { AdminPayment, AdminRefund } from '@/lib/types';
 
-const METHOD: Record<AdminPayment['method'], string> = { orange_money: 'Orange Money', mtn_momo: 'MTN MoMo', stripe: 'Carte' };
+const METHOD: Record<AdminPayment['method'], string> = { orange_money: 'Orange Money', mtn_momo: 'MTN MoMo', cinetpay: 'CinetPay', stripe: 'Carte' };
 const STATUS: Record<AdminPayment['status'], [string, 'ok' | 'warn' | 'maple' | 'gray']> = {
   succeeded: ['Payé', 'ok'], pending: ['En attente', 'warn'], failed: ['Échoué', 'maple'], refunded: ['Remboursé', 'gray'],
 };

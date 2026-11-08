@@ -1,6 +1,6 @@
 import { createECDH, randomBytes } from 'node:crypto';
 import ece from 'http_ece';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { totpCode } from '../src/infra/crypto.js';
 import { RefundsService } from '../src/modules/billing/refunds.service.js';
 import { adminToken, auth, createTestApp, newStudent, setPlan, teacherToken, type TestContext } from './helpers.js';
@@ -264,6 +264,57 @@ describe('payments', () => {
     const after = await ctx.http.get('/api/me').set(auth(s.token));
     expect(after.body.plan.id).toBe('reussite');
     expect(after.body.c2GuaranteeUntil).toBeTruthy();
+  });
+
+  it('offers CinetPay without a phone number and settles it from a re-verified notification', async () => {
+    expect((await ctx.http.get('/api/payments/methods')).body).toEqual(['orange_money', 'mtn_momo', 'cinetpay', 'stripe']);
+    const s = await newStudent(ctx);
+    const ok = await ctx.http.post('/api/payments/checkout').set(auth(s.token)).send({ planId: 'standard', method: 'cinetpay' });
+    expect(ok.body).toMatchObject({ status: 'succeeded', method: 'cinetpay' });
+
+    // A pending CinetPay payment: CinetPay posts a form with our transaction id.
+    const { rows: [p] } = await ctx.pool.query<{ id: string }>(
+      `INSERT INTO payments (user_id, plan_id, amount, method) VALUES ($1, 'pro', 19900, 'cinetpay') RETURNING id`, [s.id]);
+    await ctx.pool.query('UPDATE payments SET provider_ref = id::text WHERE id = $1', [p.id]);
+    expect((await ctx.http.get('/api/payments/webhook/cinetpay')).status).toBe(200);
+    const back = await ctx.http.post(`/api/payments/return/${p.id}`).type('form').send({ transaction_id: p.id });
+    expect(back.status).toBe(303);
+    expect(back.headers.location).toBe(`${ctx.config.PUBLIC_WEB_URL}/paiement/${p.id}`);
+    // Without the secret (sandbox) or CinetPay's confirmation (live), a notification changes nothing.
+    await ctx.http.post('/api/payments/webhook/cinetpay').type('form').send({ cpm_trans_id: p.id, cpm_site_id: '1' }).expect(200);
+    const statusOf = async () => (await ctx.pool.query<{ status: string }>('SELECT status FROM payments WHERE id = $1', [p.id])).rows[0].status;
+    expect(await statusOf()).toBe('pending');
+    await ctx.http.post('/api/payments/webhook/cinetpay').set('x-webhook-secret', ctx.config.PAYMENTS_WEBHOOK_SECRET!).type('form').send({ cpm_trans_id: p.id }).expect(200);
+    expect(await statusOf()).toBe('succeeded');
+    expect((await ctx.http.get('/api/me').set(auth(s.token))).body.plan.id).toBe('pro');
+  });
+
+  it('talks to the CinetPay API with the site credentials', async () => {
+    const { CinetPayGateway } = await import('../src/modules/billing/gateways.js');
+    const calls: { url: string; body: Record<string, unknown> }[] = [];
+    const replies = [
+      { code: '201', message: 'CREATED', data: { payment_token: 't', payment_url: 'https://checkout.cinetpay.com/payment/t' } },
+      { code: '00', message: 'SUCCES', data: { status: 'ACCEPTED' } },
+      { code: '662', message: 'WAITING_CUSTOMER_PAYMENT', data: { status: 'WAITING_FOR_CUSTOMER' } },
+      { code: '600', message: 'PAYMENT_FAILED', data: { status: 'REFUSED' } },
+    ];
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      calls.push({ url: String(url), body: JSON.parse(String(init?.body)) });
+      return new Response(JSON.stringify(replies[calls.length - 1]), { status: 200 });
+    });
+    try {
+      const g = new CinetPayGateway({ ...ctx.config, CINETPAY_API_KEY: 'key', CINETPAY_SITE_ID: '123', CINETPAY_BASE_URL: 'https://api-checkout.cinetpay.com' });
+      const r = await g.checkout({ paymentId: 'pay-1', amount: 9900, description: 'C2Pass – Premium Standard', returnUrl: 'https://x/r', cancelUrl: 'https://x/c', notifyUrl: 'https://x/n' });
+      expect(r).toEqual({ providerRef: 'pay-1', status: 'pending', checkoutUrl: 'https://checkout.cinetpay.com/payment/t' });
+      expect(calls[0].url).toBe('https://api-checkout.cinetpay.com/v2/payment');
+      expect(calls[0].body).toMatchObject({ apikey: 'key', site_id: '123', transaction_id: 'pay-1', amount: 9900, currency: 'XAF', notify_url: 'https://x/n' });
+      expect(await g.status('pay-1')).toBe('succeeded');
+      expect(calls[1]).toMatchObject({ url: 'https://api-checkout.cinetpay.com/v2/payment/check', body: { transaction_id: 'pay-1', site_id: '123' } });
+      expect(await g.status('pay-1')).toBe('pending');
+      expect(await g.status('pay-1')).toBe('failed');
+    } finally {
+      fetchMock.mockRestore();
+    }
   });
 });
 

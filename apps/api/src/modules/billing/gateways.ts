@@ -3,7 +3,8 @@ import Stripe from 'stripe';
 import { AppError } from '../../common/errors.js';
 import type { Config } from '../../config.js';
 
-export type PaymentMethod = 'orange_money' | 'mtn_momo' | 'stripe';
+export const PAYMENT_METHODS = ['orange_money', 'mtn_momo', 'cinetpay', 'stripe'] as const;
+export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
 export type PaymentStatus = 'pending' | 'succeeded' | 'failed';
 
 export interface CheckoutRequest {
@@ -189,13 +190,54 @@ export class StripeGateway implements PaymentGateway {
   }
 }
 
+/**
+ * CinetPay (aggregator, cahier des charges p. 25): fallback when Orange Money or MTN is down, and the other Mobile Money
+ * operators of the region. The payer chooses their operator on CinetPay's page; our payment id is the transaction_id.
+ */
+export class CinetPayGateway implements PaymentGateway {
+  constructor(private readonly cfg: Config) {}
+
+  private async call<T>(path: string, body: Record<string, unknown>) {
+    const res = await fetch(`${this.cfg.CINETPAY_BASE_URL}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ apikey: this.cfg.CINETPAY_API_KEY, site_id: this.cfg.CINETPAY_SITE_ID, ...body }),
+    });
+    const b = (await res.json().catch(() => ({}))) as { code?: string; message?: string; data?: T };
+    return { httpOk: res.ok, ...b };
+  }
+
+  async checkout(req: CheckoutRequest): Promise<CheckoutResult> {
+    const b = await this.call<{ payment_url: string; payment_token: string }>('/v2/payment', {
+      transaction_id: req.paymentId,
+      amount: req.amount, // XAF amounts must be multiples of 5
+      currency: 'XAF',
+      description: req.description.replace(/[^\p{L}\p{N} .,'-]/gu, ' ').slice(0, 100),
+      notify_url: req.notifyUrl,
+      return_url: req.returnUrl,
+      channels: 'MOBILE_MONEY',
+      lang: 'fr',
+    });
+    if (b.code !== '201' || !b.data?.payment_url) throw new Error(`CinetPay payment init failed (${b.code ?? 'no code'} ${b.message ?? ''})`);
+    return { providerRef: req.paymentId, status: 'pending', checkoutUrl: b.data.payment_url };
+  }
+
+  async status(transactionId: string): Promise<PaymentStatus> {
+    const b = await this.call<{ status: string }>('/v2/payment/check', { transaction_id: transactionId });
+    if (b.code === '00' && b.data?.status === 'ACCEPTED') return 'succeeded';
+    if (b.data?.status === 'REFUSED' || b.message === 'PAYMENT_FAILED' || b.message === 'TRANSACTION_CANCEL') return 'failed';
+    return 'pending';
+  }
+}
+
 export function buildGateways(cfg: Config): Record<PaymentMethod, PaymentGateway> {
   const sandbox = new SandboxGateway();
-  if (cfg.PAYMENTS_MODE !== 'live') return { orange_money: sandbox, mtn_momo: sandbox, stripe: sandbox };
+  if (cfg.PAYMENTS_MODE !== 'live') return { orange_money: sandbox, mtn_momo: sandbox, cinetpay: sandbox, stripe: sandbox };
   const unavailable = new UnavailableGateway();
   return {
     orange_money: cfg.ORANGE_MONEY_CLIENT_ID && cfg.ORANGE_MONEY_CLIENT_SECRET && cfg.ORANGE_MONEY_MERCHANT_KEY ? new OrangeMoneyGateway(cfg) : unavailable,
     mtn_momo: cfg.MTN_MOMO_API_USER && cfg.MTN_MOMO_API_KEY && cfg.MTN_MOMO_SUBSCRIPTION_KEY ? new MtnMomoGateway(cfg) : unavailable,
+    cinetpay: cfg.CINETPAY_API_KEY && cfg.CINETPAY_SITE_ID ? new CinetPayGateway(cfg) : unavailable,
     stripe: cfg.STRIPE_SECRET_KEY ? new StripeGateway(cfg.STRIPE_SECRET_KEY) : unavailable,
   };
 }

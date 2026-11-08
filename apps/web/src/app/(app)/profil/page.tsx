@@ -17,8 +17,12 @@ import type { Me, Payment, RefundRequest, Tokens } from '@/lib/types';
 const METHODS = [
   { id: 'orange_money', label: 'Orange Money', color: '#ff7900' },
   { id: 'mtn_momo', label: 'MTN Mobile Money', color: '#ffcc00' },
+  { id: 'cinetpay', label: 'Autre Mobile Money (CinetPay)', color: '#12a150' },
   { id: 'stripe', label: 'Carte bancaire', color: '#635bff' },
 ] as const;
+type MethodId = (typeof METHODS)[number]['id'];
+/** Methods where the payer types their number here; the others ask for it on the provider's page. */
+const NEEDS_PHONE: readonly MethodId[] = ['orange_money', 'mtn_momo'];
 const PAYMENT_STATUS: Record<Payment['status'], [string, 'ok' | 'warn' | 'maple' | 'gray']> = {
   succeeded: ['Payé', 'ok'], pending: ['En attente', 'warn'], failed: ['Échoué', 'maple'], refunded: ['Remboursé', 'gray'],
 };
@@ -131,12 +135,16 @@ function RefundLine({ payment, request, onAsk }: { payment: Payment; request?: R
 
 function Checkout({ planId, me, onClose, onPaid }: { planId: PlanId; me: Me; onClose: () => void; onPaid: (id: string) => void }) {
   const plan = PLANS[planId];
-  const [method, setMethod] = useState<(typeof METHODS)[number]['id']>('orange_money');
+  const available = useLoad(() => api.get<MethodId[]>('/payments/methods'));
+  const methods = METHODS.filter((m) => available.data?.includes(m.id));
+  const [chosen, setMethod] = useState<MethodId | null>(null);
+  const method = chosen ?? methods[0]?.id ?? null;
+  const needsPhone = method !== null && NEEDS_PHONE.includes(method);
   const [phone, setPhone] = useState(me.phone ?? '');
   const action = useAction();
 
   async function pay() {
-    const p = await action.run(() => api.post<Payment>('/payments/checkout', { planId, method, phone: method === 'stripe' ? undefined : phone.trim() }));
+    const p = await action.run(() => api.post<Payment>('/payments/checkout', { planId, method, phone: needsPhone ? phone.trim() : undefined }));
     if (!p) return;
     if (p.checkoutUrl && p.status === 'pending') window.location.href = p.checkoutUrl;
     else onPaid(p.id);
@@ -150,20 +158,22 @@ function Checkout({ planId, me, onClose, onPaid }: { planId: PlanId; me: Me; onC
           <p className="text-xl font-bold text-navy-900">{plan.name} · {money(plan.priceXaf)}</p>
           <p className="text-xs text-muted">{plan.billing === 'one_time' ? 'Paiement unique, accès 3 mois' : 'Accès 30 jours, sans renouvellement automatique'}</p>
           <div className="mt-4 space-y-2">
-            {METHODS.map((m) => (
+            {available.loading && <Spinner />}
+            {available.data && methods.length === 0 && <Notice tone="warn">Le paiement en ligne n’est pas encore ouvert. Réessayez bientôt.</Notice>}
+            {methods.map((m) => (
               <button key={m.id} onClick={() => setMethod(m.id)} className={cx('flex w-full items-center gap-3 rounded-lg border p-3 text-left text-sm font-medium', method === m.id ? 'border-navy-900 ring-1 ring-navy-900' : 'border-line')}>
                 <span className="grid h-8 w-8 place-items-center rounded-md" style={{ background: m.color }}>{m.id === 'stripe' ? <CreditCard className="h-4 w-4 text-white" /> : <Smartphone className="h-4 w-4 text-navy-950" />}</span>
                 {m.label}
               </button>
             ))}
           </div>
-          {method !== 'stripe' && (
+          {needsPhone && (
             <div className="mt-4"><Field label="Numéro Mobile Money" hint="Vous validerez le paiement sur votre téléphone."><Input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+237 6 99 00 00 00" /></Field></div>
           )}
           <div className="mt-4"><ErrorNotice error={action.error} /></div>
           <div className="mt-4 flex justify-end gap-2">
             <Button variant="secondary" onClick={onClose}>Annuler</Button>
-            <Button onClick={() => void pay()} busy={action.busy} disabled={method !== 'stripe' && phone.trim().length < 8}>Payer {money(plan.priceXaf)}</Button>
+            <Button onClick={() => void pay()} busy={action.busy} disabled={!method || (needsPhone && phone.trim().length < 8)}>Payer {money(plan.priceXaf)}</Button>
           </div>
         </div>
       </Card>

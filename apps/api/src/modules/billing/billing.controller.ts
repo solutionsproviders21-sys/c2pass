@@ -1,13 +1,13 @@
-import { Body, Controller, Get, Headers, HttpCode, Inject, Logger, Param, Post, Req } from '@nestjs/common';
+import { All, Body, Controller, Get, Headers, HttpCode, Inject, Logger, Param, Post, Req, Res } from '@nestjs/common';
 import { PLAN_IDS, PLANS } from '@c2pass/shared';
 import { createHash, timingSafeEqual } from 'node:crypto';
-import type { Request } from 'express';
+import type { Request, Response } from 'express';
 import { z } from 'zod';
 import { assertEmailVerified, CurrentUser, Public, type AuthUser } from '../../common/auth.js';
 import { badRequest, unauthorized } from '../../common/errors.js';
 import { CONFIG, type Config } from '../../config.js';
 import { BillingService } from './billing.service.js';
-import { StripeGateway } from './gateways.js';
+import { PAYMENT_METHODS, StripeGateway } from './gateways.js';
 
 @Controller()
 export class BillingController {
@@ -28,11 +28,17 @@ export class BillingController {
   checkout(@CurrentUser() user: AuthUser, @Body() body: unknown) {
     const b = z.object({
       planId: z.enum(PLAN_IDS).refine((p) => p !== 'free'),
-      method: z.enum(['orange_money', 'mtn_momo', 'stripe']),
+      method: z.enum(PAYMENT_METHODS),
       phone: z.string().regex(/^\+?[0-9 ]{8,20}$/).optional(),
     }).parse(body);
     assertEmailVerified(user);
     return this.billing.checkout(user.id, b.planId, b.method, b.phone);
+  }
+
+  @Public()
+  @Get('payments/methods')
+  methods() {
+    return this.billing.availableMethods();
   }
 
   @Get('payments')
@@ -71,6 +77,36 @@ export class BillingController {
     if (!payment?.provider_ref) throw badRequest('unknown_payment', 'Unknown payment');
     const status = this.config.PAYMENTS_MODE === 'live'
       ? await this.billing.gateways.mtn_momo.status(payment.provider_ref)
+      : sameSecret(secret, this.config.PAYMENTS_WEBHOOK_SECRET) ? ((body as { status?: string }).status === 'FAILED' ? 'failed' : 'succeeded') : 'pending';
+    await this.billing.settle(payment.id, status);
+    return { received: true };
+  }
+
+  /** Where CinetPay sends the payer back (GET or POST): on to the payment page, which polls the status. */
+  @Public()
+  @All('payments/return/:id')
+  back(@Param('id') id: string, @Res() res: Response) {
+    const page = /^[0-9a-f-]{36}$/i.test(id) ? `/paiement/${id}` : '/profil';
+    res.redirect(303, `${this.config.PUBLIC_WEB_URL}${page}`);
+  }
+
+  /** CinetPay checks that the notification URL answers before it accepts it. */
+  @Public()
+  @Get('payments/webhook/cinetpay')
+  cinetpayPing() {
+    return { ok: true };
+  }
+
+  /** CinetPay notification (form-encoded cpm_trans_id): never trusted as is, the status is fetched again from CinetPay. */
+  @Public()
+  @Post('payments/webhook/cinetpay')
+  @HttpCode(200)
+  async cinetpay(@Body() body: unknown, @Headers('x-webhook-secret') secret?: string) {
+    const b = z.object({ cpm_trans_id: z.string() }).passthrough().parse(body);
+    const payment = await this.billing.byProviderRef('cinetpay', b.cpm_trans_id);
+    if (!payment) throw badRequest('unknown_payment', 'Unknown payment');
+    const status = this.config.PAYMENTS_MODE === 'live'
+      ? await this.billing.gateways.cinetpay.status(b.cpm_trans_id)
       : sameSecret(secret, this.config.PAYMENTS_WEBHOOK_SECRET) ? ((body as { status?: string }).status === 'FAILED' ? 'failed' : 'succeeded') : 'pending';
     await this.billing.settle(payment.id, status);
     return { received: true };

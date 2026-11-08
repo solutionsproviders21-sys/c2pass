@@ -24,6 +24,7 @@ Object.assign(process.env, {
   LANGUAGETOOL_URL: '',
   OPENAI_API_KEY: '',
   PAYMENTS_MODE: 'sandbox',
+  PAYMENTS_WEBHOOK_SECRET: 'test-webhook-secret',
 });
 
 export interface TestContext {

@@ -25,7 +25,7 @@ export default function Privacy() {
       <List>
         <li>OpenAI (correction avancée des copies et transcription de l’oral) et LanguageTool (vérification grammaticale) : le texte de vos copies et l’audio de l’oral, sans votre nom.</li>
         <li>Twilio (SMS) et Meta WhatsApp Business : votre numéro et le texte de l’alerte.</li>
-        <li>Orange Money, MTN Mobile Money, Stripe : les informations nécessaires au paiement.</li>
+        <li>Orange Money, MTN Mobile Money, CinetPay, Stripe : les informations nécessaires au paiement.</li>
         <li>Google et Facebook, si vous choisissez de vous connecter avec eux : votre identifiant, nom et e-mail.</li>
         <li>Notre hébergeur ({LEGAL.host}) et le service d’envoi d’e-mails.</li>
       </List>

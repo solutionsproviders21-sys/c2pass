@@ -37,7 +37,7 @@ export default function Terms() {
       </p>
       <H2>6. Paiement</H2>
       <p>
-        Le paiement s’effectue par Orange Money, MTN Mobile Money ou carte bancaire (Stripe). L’offre est activée dès la confirmation du paiement par le prestataire.
+        Le paiement s’effectue par Orange Money, MTN Mobile Money, CinetPay (autres opérateurs Mobile Money) ou carte bancaire (Stripe). L’offre est activée dès la confirmation du paiement par le prestataire.
         C2Pass ne conserve aucune donnée de carte bancaire.
       </p>
       <H2>7. Garantie C2 du Pack Réussite</H2>

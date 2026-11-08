@@ -7,7 +7,7 @@ import { audit } from '../../infra/audit.js';
 import { withTransaction } from '../../infra/database.js';
 import { NOTIFIER, type Notifier } from '../../infra/notifier.js';
 import { PG } from '../../infra/tokens.js';
-import { buildGateways, UnavailableGateway, type PaymentGateway, type PaymentMethod, type PaymentStatus } from './gateways.js';
+import { buildGateways, PAYMENT_METHODS, UnavailableGateway, type PaymentGateway, type PaymentMethod, type PaymentStatus } from './gateways.js';
 
 const MAX_PENDING_PAYMENTS = 3;
 
@@ -46,7 +46,7 @@ export class BillingService {
   async checkout(userId: string, planId: PlanId, method: PaymentMethod, payerPhone?: string) {
     const plan = PLANS[planId];
     if (!plan || plan.priceXaf <= 0) throw badRequest('invalid_plan', 'Offre invalide');
-    if (method !== 'stripe' && !payerPhone) throw badRequest('phone_required', 'Numéro Mobile Money requis');
+    if ((method === 'orange_money' || method === 'mtn_momo') && !payerPhone) throw badRequest('phone_required', 'Numéro Mobile Money requis');
     if (this.gateways[method] instanceof UnavailableGateway) await this.gateways[method].checkout();
     // Each Mobile Money checkout sends a prompt to a phone: a few pending attempts at a time, no more.
     const { rows: [{ n }] } = await this.pool.query<{ n: number }>(
@@ -61,8 +61,9 @@ export class BillingService {
     const web = this.config.PUBLIC_WEB_URL;
     const result = await this.gateways[method].checkout({
       paymentId: p.id, amount: p.amount, payerPhone, description: `C2Pass – ${plan.name}`,
-      returnUrl: `${web}/paiement/${p.id}`, cancelUrl: `${web}/tarifs?annule=1`,
-      notifyUrl: `${this.config.API_PUBLIC_URL}/api/payments/webhook/${method === 'orange_money' ? 'orange-money' : method === 'mtn_momo' ? 'mtn-momo' : 'stripe'}`,
+      // CinetPay sends the payer back with a POST, which the static site cannot take: the API redirects it.
+      returnUrl: method === 'cinetpay' ? `${this.config.API_PUBLIC_URL}/api/payments/return/${p.id}` : `${web}/paiement/${p.id}`, cancelUrl: `${web}/tarifs?annule=1`,
+      notifyUrl: `${this.config.API_PUBLIC_URL}/api/payments/webhook/${method.replace('_', '-')}`,
     });
     await this.pool.query(
       `UPDATE payments SET provider_ref = $2, checkout_url = $3, callback_token = $4 WHERE id = $1`,
@@ -70,6 +71,11 @@ export class BillingService {
     );
     if (result.status !== 'pending') await this.settle(p.id, result.status);
     return toPayment(await this.get(userId, p.id));
+  }
+
+  /** Payment methods that can take a payment right now (merchant keys present), for the payment form. */
+  availableMethods(): PaymentMethod[] {
+    return PAYMENT_METHODS.filter((m) => !(this.gateways[m] instanceof UnavailableGateway));
   }
 
   async get(userId: string, id: string): Promise<PaymentRow> {

@@ -65,6 +65,9 @@ const schema = z.object({
   MTN_MOMO_SUBSCRIPTION_KEY: optional,
   MTN_MOMO_API_USER: optional,
   MTN_MOMO_API_KEY: optional,
+  CINETPAY_BASE_URL: z.string().default('https://api-checkout.cinetpay.com'),
+  CINETPAY_API_KEY: optional,
+  CINETPAY_SITE_ID: optional,
   STRIPE_SECRET_KEY: optional,
   STRIPE_WEBHOOK_SECRET: optional,
 

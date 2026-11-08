@@ -109,7 +109,7 @@ export default function Landing() {
               </Card>
             ))}
           </div>
-          <p className="mt-4 text-sm text-muted">Paiement par Orange Money, MTN Mobile Money ou carte bancaire.</p>
+          <p className="mt-4 text-sm text-muted">Paiement par Orange Money, MTN Mobile Money, CinetPay ou carte bancaire.</p>
         </section>
 
         <section className="bg-navy-50">

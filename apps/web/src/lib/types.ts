@@ -131,7 +131,7 @@ export interface AlertSubscription {
 export interface AppNotification { id: string; centreId: string | null; title: string; body: string; url: string | null; readAt: string | null; createdAt: string }
 
 export interface Payment {
-  id: string; planId: PlanId; amount: number; currency: string; method: 'orange_money' | 'mtn_momo' | 'stripe';
+  id: string; planId: PlanId; amount: number; currency: string; method: 'orange_money' | 'mtn_momo' | 'cinetpay' | 'stripe';
   status: 'pending' | 'succeeded' | 'failed' | 'refunded'; checkoutUrl: string | null; createdAt: string; confirmedAt: string | null;
 }
 

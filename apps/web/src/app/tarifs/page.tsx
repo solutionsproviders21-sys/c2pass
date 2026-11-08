@@ -5,7 +5,7 @@ import { PlanCards } from '@/components/plan-cards';
 export const metadata: Metadata = { title: 'Tarifs' };
 
 const FAQ = [
-  ['Comment payer ?', 'Par Orange Money, MTN Mobile Money ou carte bancaire (Visa, Mastercard). Vous validez le paiement sur votre téléphone ; l’offre est activée dès la confirmation.'],
+  ['Comment payer ?', 'Par Orange Money, MTN Mobile Money, les autres Mobile Money de la région via CinetPay (Moov, Wave…) ou carte bancaire (Visa, Mastercard). Vous validez le paiement sur votre téléphone ; l’offre est activée dès la confirmation.'],
   ['Puis-je arrêter quand je veux ?', 'Oui. Les offres mensuelles ne se renouvellent pas automatiquement : vous rachetez un mois quand vous le souhaitez.'],
   ['Comment fonctionne la garantie C2 du Pack Réussite ?', 'Si, après avoir suivi le programme pendant 3 mois (au moins 3 simulations complètes), vous n’obtenez pas le niveau C2 dans une compétence visée, nous vous remboursons sur présentation de votre attestation officielle.'],
   ['C2Pass réserve-t-il ma place à l’examen ?', 'Non, et c’est volontaire : la réservation automatique est interdite par les centres. Nous surveillons légalement les pages publiques et vous alertons immédiatement ; le coffre-fort vous permet ensuite de remplir le formulaire officiel en quelques secondes.'],
