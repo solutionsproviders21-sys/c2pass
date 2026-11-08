@@ -61,9 +61,9 @@ export function Shell({ nav, children, footer }: { nav: NavItem[]; children: Rea
   );
 
   return (
-    <div className="min-h-dvh lg:pl-64">
-      <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 bg-navy-900 lg:block">{sidebar}</aside>
-      <div className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-line bg-white px-4 lg:hidden">
+    <div className="min-h-dvh lg:pl-64 print:pl-0">
+      <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 bg-navy-900 lg:block print:hidden">{sidebar}</aside>
+      <div className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-line bg-white px-4 lg:hidden print:hidden">
         <Logo href={nav[0].href} />
         <button onClick={() => setOpen(true)} aria-label="Ouvrir le menu"><Menu /></button>
       </div>

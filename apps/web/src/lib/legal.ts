@@ -12,5 +12,5 @@ export const LEGAL = {
   email: process.env.NEXT_PUBLIC_CONTACT_EMAIL || 'contact@c2pass.cm',
   privacyEmail: process.env.NEXT_PUBLIC_PRIVACY_EMAIL || process.env.NEXT_PUBLIC_CONTACT_EMAIL || 'contact@c2pass.cm',
   host: process.env.NEXT_PUBLIC_LEGAL_HOST || todo,
-  updatedAt: '14 octobre 2026',
+  updatedAt: '8 novembre 2026',
 };

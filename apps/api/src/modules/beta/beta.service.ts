@@ -1,9 +1,10 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, type OnModuleInit } from '@nestjs/common';
 import { randomInt } from 'node:crypto';
 import type pg from 'pg';
 import { notFound } from '../../common/errors.js';
 import { CONFIG, type Config } from '../../config.js';
 import { audit } from '../../infra/audit.js';
+import { JOBS, type Jobs } from '../../infra/jobs.js';
 import { NOTIFIER, type Notifier } from '../../infra/notifier.js';
 import { PG } from '../../infra/tokens.js';
 
@@ -21,12 +22,27 @@ export interface InviteRow {
  * addresses; the administrator invites them, or creates codes to hand out (schools, partners).
  */
 @Injectable()
-export class BetaService {
+export class BetaService implements OnModuleInit {
   constructor(
     @Inject(PG) private readonly pool: pg.Pool,
     @Inject(CONFIG) private readonly config: Config,
     @Inject(NOTIFIER) private readonly notifier: Notifier,
+    @Inject(JOBS) private readonly jobs: Jobs,
   ) {}
+
+  async onModuleInit() {
+    this.jobs.register('beta.purge_leads', () => this.purgeOldLeads().then(() => undefined));
+    if (this.config.NODE_ENV !== 'test') await this.jobs.repeat('beta.purge_leads', 24 * 60 * 60_000);
+  }
+
+  /** Retention stated in the GDPR register: a waitlist address is kept 3 years after its last sign-up. */
+  async purgeOldLeads() {
+    const { rowCount } = await this.pool.query(
+      `DELETE FROM leads l WHERE NOT EXISTS (
+         SELECT 1 FROM leads r WHERE lower(r.email) = lower(l.email) AND greatest(r.created_at, coalesce(r.invited_at, r.created_at)) > now() - interval '3 years')`,
+    );
+    return rowCount ?? 0;
+  }
 
   async listInvites(): Promise<InviteRow[]> {
     const { rows } = await this.pool.query<InviteRow>(

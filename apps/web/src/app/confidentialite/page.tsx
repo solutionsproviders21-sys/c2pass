@@ -17,17 +17,18 @@ export default function Privacy() {
         <li><strong>Préparation</strong> : réponses, copies écrites, enregistrements de votre voix pendant l’expression orale, scores. Pour vous corriger, suivre votre progression et, selon l’offre, permettre la correction par un correcteur humain.</li>
         <li><strong>Coffre-fort candidat</strong> : informations utiles à l’inscription au TCF (pièce d’identité, adresse…) que vous choisissez d’y enregistrer. Elles sont chiffrées (AES-256-GCM) et chaque consultation est journalisée. Nous ne les transmettons à personne : c’est vous qui les copiez dans le formulaire officiel.</li>
         <li><strong>Alertes</strong> : centres suivis et canaux choisis (e-mail, SMS, WhatsApp, notifications). Pour vous prévenir de l’ouverture des inscriptions.</li>
-        <li><strong>Paiements</strong> : offre, montant, moyen de paiement, numéro Mobile Money utilisé. Aucune donnée de carte n’est conservée par C2Pass.</li>
+        <li><strong>Paiements</strong> : offre, montant, moyen de paiement, numéro Mobile Money utilisé. Pour une demande de remboursement ou de garantie C2 : le motif et l’attestation officielle du TCF que vous joignez. Aucune donnée de carte n’est conservée par C2Pass.</li>
         <li><strong>Sécurité et prévention de la fraude</strong> : adresse IP, empreinte technique du navigateur, sorties de page pendant un examen, journal des actions sensibles.</li>
+        <li><strong>Liste d’attente</strong> : l’e-mail et le pays laissés sur la page d’accueil, et le code d’invitation qui vous est envoyé. Pour vous prévenir de l’ouverture et vous inviter.</li>
       </List>
       <H2>Sous-traitants</H2>
       <p>Selon les fonctions utilisées, certaines données sont transmises aux prestataires suivants, uniquement pour rendre le service :</p>
       <List>
-        <li>OpenAI (correction avancée des copies et transcription de l’oral) et LanguageTool (vérification grammaticale) : le texte de vos copies et l’audio de l’oral, sans votre nom.</li>
+        <li>OpenAI (correction avancée des copies et transcription de l’oral) LanguageTool (vérification grammaticale) et TextRazor (analyse du sujet traité) : le texte de vos copies et l’audio de l’oral, sans votre nom.</li>
         <li>Twilio (SMS) et Meta WhatsApp Business : votre numéro et le texte de l’alerte.</li>
         <li>Orange Money, MTN Mobile Money, CinetPay, Stripe : les informations nécessaires au paiement.</li>
         <li>Google et Facebook, si vous choisissez de vous connecter avec eux : votre identifiant, nom et e-mail.</li>
-        <li>Notre hébergeur ({LEGAL.host}) et le service d’envoi d’e-mails.</li>
+        <li>Notre hébergeur ({LEGAL.host}), le service d’envoi d’e-mails et, le cas échéant, le stockage où sont copiées nos sauvegardes chiffrées.</li>
       </List>
       <p>Certains de ces prestataires sont situés hors d’Afrique centrale ; les transferts sont limités au strict nécessaire.</p>
       <H2>Durées de conservation</H2>
@@ -35,6 +36,8 @@ export default function Privacy() {
         <li>Données du compte, de préparation, du coffre-fort et enregistrements : tant que le compte existe. Ils sont effacés à sa suppression.</li>
         <li>Paiements : conservés de façon anonymisée pendant la durée légale de conservation comptable.</li>
         <li>Journal de sécurité : conservé pour la sécurité du service ; les adresses IP qui vous concernent sont effacées à la suppression du compte.</li>
+        <li>Liste d’attente : 3 ans après votre inscription, ou plus tôt sur simple demande ; effacée aussi à la suppression du compte créé avec la même adresse.</li>
+        <li>Sauvegardes chiffrées : 14 jours ; une donnée effacée disparaît des sauvegardes à l’issue de ce délai.</li>
       </List>
       <H2>Cookies et stockage local</H2>
       <p>

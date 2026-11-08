@@ -498,6 +498,11 @@ describe('private beta and waitlist', () => {
       ctx.config.SIGNUP_MODE = 'open';
     }
     expect((await ctx.http.get(`/api/admin/leads?q=${email}`).set(auth(admin))).body[0]).toMatchObject({ registered: true });
+    // Deleting the account also erases the waitlist entry and the address on the invitation.
+    const login = await ctx.http.post('/api/auth/login').send({ email, password: 'Motdepasse-solide-1' });
+    await ctx.http.delete('/api/me').set(auth(login.body.accessToken)).expect(204);
+    expect((await ctx.http.get(`/api/admin/leads?q=${email}`).set(auth(admin))).body).toHaveLength(0);
+    expect((await ctx.pool.query('SELECT 1 FROM invites WHERE email = $1', [email])).rowCount).toBe(0);
 
     const other = `effacer${Date.now()}@test.cm`;
     await ctx.http.post('/api/leads').send({ email: other }).expect(201);
@@ -507,6 +512,55 @@ describe('private beta and waitlist', () => {
     // Students cannot see the waitlist.
     const s = await newStudent(ctx);
     expect((await ctx.http.get('/api/admin/leads').set(auth(s.token))).status).toBe(403);
+  });
+});
+
+describe('GDPR register and acquisition indicators', () => {
+  it('serves the register of processing activities with live counts and active processors', async () => {
+    const admin = await adminToken(ctx);
+    const r = (await ctx.http.get('/api/admin/gdpr/register').set(auth(admin))).body;
+    expect(r.activities.map((a: { id: string }) => a.id)).toEqual(['accounts', 'training', 'vault', 'alerts', 'payments', 'security', 'waitlist', 'backups']);
+    const accounts = r.activities[0];
+    expect(accounts.records).toBeGreaterThan(0);
+    expect(accounts.legalBasis).toBeTruthy();
+    // Test server: no OpenAI key, so OpenAI is listed but not active.
+    expect(r.activities[1].processors.find((p: { name: string }) => p.name === 'OpenAI')).toMatchObject({ active: false });
+    const s = await newStudent(ctx);
+    expect((await ctx.http.get('/api/admin/gdpr/register').set(auth(s.token))).status).toBe(403);
+  });
+
+  it('purges waitlist addresses after 3 years', async () => {
+    const old = `ancien${Date.now()}@test.cm`;
+    const recent = `recent${Date.now()}@test.cm`;
+    await ctx.pool.query(`INSERT INTO leads (email, created_at) VALUES ($1, now() - interval '3 years 1 day'), ($2, now() - interval '2 years')`, [old, recent]);
+    const { BetaService } = await import('../src/modules/beta/beta.service.js');
+    expect(await ctx.app.get(BetaService).purgeOldLeads()).toBeGreaterThanOrEqual(1);
+    const left = (await ctx.pool.query('SELECT email FROM leads WHERE email = ANY($1)', [[old, recent]])).rows.map((r) => r.email);
+    expect(left).toEqual([recent]);
+  });
+
+  it('computes CAC and LTV from the marketing spend entered by the admin', async () => {
+    const admin = await adminToken(ctx);
+    const month = new Date().toISOString().slice(0, 7);
+    const before = (await ctx.http.get('/api/admin/marketing/kpis').set(auth(admin))).body;
+    const added = await ctx.http.post('/api/admin/marketing/spend').set(auth(admin)).send({ month, channel: 'facebook_instagram', amountXaf: 150_000, note: 'Campagne de lancement' });
+    expect(added.status).toBe(201);
+    expect((await ctx.http.post('/api/admin/marketing/spend').set(auth(admin)).send({ month: '2026-13', channel: 'google', amountXaf: 10 })).status).toBe(400);
+
+    const payer = await newStudent(ctx);
+    await ctx.http.post('/api/payments/checkout').set(auth(payer.token)).send({ planId: 'standard', method: 'mtn_momo', phone: '+237 670 00 00 09' }).expect(201);
+    const k = (await ctx.http.get('/api/admin/marketing/kpis').set(auth(admin))).body;
+    expect(k.months).toHaveLength(12);
+    const now = k.months.at(-1);
+    expect(now.month).toBe(month);
+    expect(now.spend).toBe(before.months.at(-1).spend + 150_000);
+    expect(now.newPayers).toBeGreaterThan(before.months.at(-1).newPayers);
+    expect(now.cac).toBe(Math.round(now.spend / now.newPayers));
+    expect(k.totals.ltv).toBeGreaterThan(0);
+    expect(k.totals.ltvToCac).toBe(Math.round((k.totals.ltv / k.totals.cac) * 10) / 10);
+
+    const list = (await ctx.http.get('/api/admin/marketing/spend').set(auth(admin))).body;
+    await ctx.http.delete(`/api/admin/marketing/spend/${list.find((x: { note: string }) => x.note === 'Campagne de lancement').id}`).set(auth(admin)).expect(200);
   });
 });
 

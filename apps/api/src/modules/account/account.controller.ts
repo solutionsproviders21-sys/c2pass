@@ -150,6 +150,9 @@ export class AccountController {
       await tx.query(`DELETE FROM practice_attempts WHERE user_id = $1`, [user.id]);
       await tx.query(`UPDATE audit_logs SET ip = NULL WHERE user_id = $1 OR actor_id = $1`, [user.id]);
       await tx.query(`UPDATE payments SET payer_phone = NULL WHERE user_id = $1`, [user.id]);
+      // The same address on the waitlist or on an invitation goes too.
+      await tx.query(`DELETE FROM leads WHERE lower(email) = (SELECT lower(email) FROM users WHERE id = $1)`, [user.id]);
+      await tx.query(`UPDATE invites SET email = NULL WHERE lower(email) = (SELECT lower(email) FROM users WHERE id = $1)`, [user.id]);
       await tx.query(
         `UPDATE users SET status = 'deleted', email = 'deleted-' || id || '@c2pass.invalid', password_hash = NULL,
                 totp_secret = NULL, totp_enabled = false, google_id = NULL, facebook_id = NULL WHERE id = $1`,

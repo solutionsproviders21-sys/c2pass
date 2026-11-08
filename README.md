@@ -66,6 +66,8 @@ Les moyens de paiement sont Orange Money (Web Payment), MTN MoMo (Collection), C
 - **Rappel de renouvellement** : un e-mail part 3 jours avant la fin d’une offre, une seule fois par échéance.
 - **Journal d’audit** : créations de compte, sécurité (double authentification, mots de passe, jeton volé), accès au coffre-fort, offres activées, remboursements, export et effacement RGPD, et actions des administrateurs, consultables et filtrables dans le back-office.
 - **Bêta privée et liste d’attente** : la page d’accueil recueille les adresses intéressées. Avec `SIGNUP_MODE=invite` (dans `ops/site.env`), un compte ne se crée qu’avec un code d’invitation. Le back-office (*Bêta & liste d’attente*) envoie un code personnel aux adresses choisies de la liste, ou crée des codes à plusieurs places pour un groupe (école, partenaire), et suit leur utilisation.
+- **Registre RGPD** : le back-office affiche et imprime le registre des traitements (finalités, bases légales, données, prestataires réellement branchés, durées de conservation, sécurité). Les adresses de la liste d’attente sont effacées après 3 ans.
+- **CAC et LTV** : sur la page Indicateurs, l’administrateur saisit ses dépenses marketing par mois et par canal ; la page calcule le coût d’acquisition d’un client payant, ce qu’un client rapporte et leur rapport.
 
 ## Sécurité et RGPD
 
