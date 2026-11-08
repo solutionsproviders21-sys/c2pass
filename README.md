@@ -34,10 +34,10 @@ Ce dépôt couvre la plateforme web décrite dans le cahier des charges (« c2pa
   | Niveau d’IA | Ce qui est utilisé |
   |---|---|
   | aucune | indicateurs textuels : diversité lexicale (MATTR), connecteurs C1–C2, structures complexes, longueur des phrases |
-  | base | ces indicateurs, plus LanguageTool |
+  | base | ces indicateurs, plus LanguageTool (grammaire, orthographe) et TextRazor (le texte traite-t-il le sujet ? un hors-sujet perd 3 points) |
   | avancée | GPT-4, avec une consigne calibrée sur les critères C2 |
 
-- **Correction de l’oral** : transcription par Whisper, puis évaluation de la transcription.
+- **Correction de l’oral** : transcription par Whisper, puis évaluation de la transcription. L’enregistrement est compressé dans le navigateur (Opus 32 kbit/s, environ 1 Mo pour 5 minutes) et renvoyé seul si la connexion coupe. Si le micro est refusé, absent ou occupé, le candidat voit pourquoi et peut envoyer un enregistrement fait avec son téléphone.
 - **Correcteurs humains certifiés** pour les offres Premium Pro et Pack Réussite. Leur note remplace celle de l’IA et met à jour le score de la simulation.
 
 ### 3. Centres d’examen

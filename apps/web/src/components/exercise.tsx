@@ -1,9 +1,10 @@
 'use client';
 
+import { useState } from 'react';
 import { CheckCircle2, Circle, Mic, Square, XCircle } from 'lucide-react';
 import { words } from '@c2pass/shared';
 import { clock } from '@/lib/format';
-import { useRecorder } from '@/lib/recorder';
+import { durationOf, MIC_MESSAGES, useRecorder, type MicProblem } from '@/lib/recorder';
 import { Button, cx, Notice, Textarea } from './ui';
 
 const LETTERS = ['A', 'B', 'C', 'D'];
@@ -73,6 +74,39 @@ export function WritingEditor({ value, onChange, bounds, disabled, blockPaste, o
   );
 }
 
+const MAX_AUDIO_BYTES = 15 * 1024 * 1024;
+
+/**
+ * Shown when the microphone cannot be used (cahier des charges p. 25, WebRTC risk): the reason, a retry, and a fallback
+ * that sends a file from the phone's voice recorder (on a phone, the file picker offers to record directly).
+ */
+export function MicProblemNotice({ problem, maxSeconds, onRetry, onFile }: {
+  problem: MicProblem; maxSeconds: number; onRetry: () => void; onFile: (file: File) => void;
+}) {
+  const [error, setError] = useState<string | null>(null);
+  async function pick(file: File | undefined) {
+    if (!file) return;
+    if (file.size > MAX_AUDIO_BYTES) return setError('Fichier trop lourd (15 Mo au plus).');
+    const seconds = await durationOf(file);
+    if (seconds > maxSeconds + 5) return setError(`Enregistrement trop long : ${clock(Math.round(seconds))} pour ${clock(maxSeconds)} au plus.`);
+    setError(null);
+    onFile(file);
+  }
+  return (
+    <div className="mb-3 space-y-3">
+      <Notice tone="error">{MIC_MESSAGES[problem]}</Notice>
+      <div className="flex flex-wrap items-center gap-3">
+        <Button size="sm" variant="secondary" onClick={onRetry}><Mic className="h-4 w-4" />Réessayer le micro</Button>
+        <label className="cursor-pointer text-sm font-medium text-navy-700 underline">
+          Ou envoyer un enregistrement fait avec le téléphone
+          <input type="file" accept="audio/*" capture="user" className="sr-only" onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; void pick(f); }} />
+        </label>
+      </div>
+      {error && <Notice tone="warn">{error}</Notice>}
+    </div>
+  );
+}
+
 /** Microphone recorder with a hard time limit (the EO task duration). */
 export function RecorderPanel({ maxSeconds, disabled, onRecorded, allowRetry = true }: {
   maxSeconds: number; disabled?: boolean; onRecorded: (blob: Blob, seconds: number) => void; allowRetry?: boolean;
@@ -81,7 +115,7 @@ export function RecorderPanel({ maxSeconds, disabled, onRecorded, allowRetry = t
   const remaining = maxSeconds - r.elapsed;
   return (
     <div className="rounded-xl border border-line bg-navy-50 p-4">
-      {r.state === 'denied' && <div className="mb-3"><Notice tone="error">Accès au micro refusé. Autorisez le micro dans votre navigateur puis réessayez.</Notice></div>}
+      {r.state === 'denied' && r.problem && <MicProblemNotice problem={r.problem} maxSeconds={maxSeconds} onRetry={() => void r.start()} onFile={(f) => void r.takeFile(f)} />}
       <div className="flex flex-wrap items-center gap-4">
         {r.state !== 'recording' ? (
           <Button onClick={() => void r.start()} disabled={disabled || (r.state === 'done' && !allowRetry)}><Mic className="h-4 w-4" />{r.state === 'done' ? 'Recommencer' : 'Commencer l’enregistrement'}</Button>

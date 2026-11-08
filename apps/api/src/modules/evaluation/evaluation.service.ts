@@ -8,7 +8,7 @@ import { STORAGE, type Storage } from '../../infra/storage.js';
 import { PG } from '../../infra/tokens.js';
 import { ContentRepository } from '../content/content.repository.js';
 import type { AudioFileDoc, WritingFeedback, WritingSubmissionDoc } from '../content/content.types.js';
-import { LanguageToolClient, OpenAiClient, type LanguageIssue } from './providers.js';
+import { LanguageToolClient, OpenAiClient, TextRazorClient, topicCoverage, type LanguageIssue, type Topic } from './providers.js';
 import { SPEAKING_SYSTEM, WRITING_SYSTEM, writingUserPrompt } from './prompts.js';
 
 export type EvaluatedListener = (e: { kind: 'writing' | 'speaking'; id: string; sessionId: string | null }) => Promise<void>;
@@ -25,6 +25,9 @@ export class EvaluationService implements OnModuleInit {
   private readonly logger = new Logger('Evaluation');
   private readonly languageTool: LanguageToolClient;
   private readonly llm: OpenAiClient;
+  private readonly textRazor: TextRazorClient;
+  /** Topics of each prompt, computed once per question. */
+  private readonly promptTopics = new Map<string, Topic[]>();
   private readonly listeners: EvaluatedListener[] = [];
 
   constructor(
@@ -36,6 +39,7 @@ export class EvaluationService implements OnModuleInit {
   ) {
     this.languageTool = new LanguageToolClient(config.LANGUAGETOOL_URL);
     this.llm = new OpenAiClient(config);
+    this.textRazor = new TextRazorClient(config.TEXTRAZOR_API_KEY, config.TEXTRAZOR_URL);
   }
 
   onModuleInit() {
@@ -48,7 +52,7 @@ export class EvaluationService implements OnModuleInit {
   }
 
   get capabilities() {
-    return { grammarCheck: this.languageTool.enabled, llm: this.llm.enabled };
+    return { grammarCheck: this.languageTool.enabled, topicCheck: this.textRazor.enabled, llm: this.llm.enabled };
   }
 
   /** Creates (or replaces, for exam drafts) a writing submission and schedules its evaluation. */
@@ -96,7 +100,7 @@ export class EvaluationService implements OnModuleInit {
     const question = await this.content.byId(sub.questionId);
     const bounds = EE_TASKS[(sub.task || 3) - 1] ?? EE_TASKS[2];
     try {
-      const feedback = await this.assess({ kind: 'writing', text: sub.text, tier: sub.tier, task: sub.task, statement: question?.statement ?? '', context: question?.context, bounds });
+      const feedback = await this.assess({ kind: 'writing', text: sub.text, tier: sub.tier, task: sub.task, questionId: sub.questionId, statement: question?.statement ?? '', context: question?.context, bounds });
       await this.content.writings.updateOne({ _id: id }, { $set: { aiScore: feedback.score, feedback, status: 'done', updatedAt: new Date() } });
     } catch (e) {
       this.logger.error(`writing ${id}: ${e instanceof Error ? e.message : e}`);
@@ -130,7 +134,7 @@ export class EvaluationService implements OnModuleInit {
     await this.emit({ kind: 'speaking', id, sessionId: audio.sessionId });
   }
 
-  private async assess(input: { kind: 'writing' | 'speaking'; text: string; tier: AiTier; task: number; statement: string; context?: string | null; bounds: { minWords: number; maxWords: number } }): Promise<WritingFeedback> {
+  private async assess(input: { kind: 'writing' | 'speaking'; text: string; tier: AiTier; task: number; questionId?: string; statement: string; context?: string | null; bounds: { minWords: number; maxWords: number } }): Promise<WritingFeedback> {
     const metrics = analyseWriting(input.text);
     const engine = ['metrics'];
     let issues: LanguageIssue[] = [];
@@ -147,13 +151,23 @@ export class EvaluationService implements OnModuleInit {
       suggestion: i.replacements[0] ?? '',
       message: i.message,
     }));
-    const heuristic = heuristicWritingScore(metrics, input.bounds, engine.includes('languagetool') ? issues.length : null);
+    const topics = input.tier !== 'none' && input.kind === 'writing' ? await this.topicCheck(input) : null;
+    if (topics) engine.push('textrazor');
+    // An answer that leaves aside most of the subject cannot get a good mark, however well written.
+    const offTopic = topics !== null && topics.ratio < 0.25;
+    const heuristic = Math.max(0, heuristicWritingScore(metrics, input.bounds, engine.includes('languagetool') ? issues.length : null) - (offTopic ? 3 : 0));
+    const strengths = strengthsFrom(metrics);
+    const improvements = improvementsFrom(metrics, input.bounds);
+    if (topics && topics.ratio >= 0.5) strengths.push(`Le texte traite bien le sujet (${topics.shared.slice(0, 3).join(', ')}).`);
+    if (topics && topics.ratio < 0.5) {
+      improvements.unshift(`${offTopic ? 'Le texte s’éloigne du sujet' : 'Une partie du sujet n’est pas traitée'} : abordez aussi ${topics.missing.slice(0, 3).join(', ')}.`);
+    }
     const base: WritingFeedback = {
       score: heuristic,
       cefr: cefrFromTwenty(heuristic),
       summary: describeMetrics(metrics, input.bounds),
-      strengths: strengthsFrom(metrics),
-      improvements: improvementsFrom(metrics, input.bounds),
+      strengths,
+      improvements,
       corrections,
       engine,
     };
@@ -178,6 +192,24 @@ export class EvaluationService implements OnModuleInit {
       }
     }
     return base;
+  }
+
+  /** Coverage of the prompt's topics by the answer (TextRazor), or null when unavailable or not meaningful. */
+  private async topicCheck(input: { text: string; questionId?: string; statement: string; context?: string | null }) {
+    if (!this.textRazor.enabled || !input.statement) return null;
+    try {
+      const key = input.questionId ?? input.statement;
+      let prompt = this.promptTopics.get(key);
+      if (!prompt) {
+        prompt = await this.textRazor.topics([input.context, input.statement].filter(Boolean).join('\n'));
+        if (this.promptTopics.size > 2000) this.promptTopics.clear();
+        this.promptTopics.set(key, prompt);
+      }
+      return topicCoverage(prompt, await this.textRazor.topics(input.text));
+    } catch (e) {
+      this.logger.warn(`TextRazor unavailable: ${e instanceof Error ? e.message : e}`);
+      return null;
+    }
   }
 
   private async requestHumanReview(submissionId: string, kind: 'writing' | 'speaking', userId: string) {

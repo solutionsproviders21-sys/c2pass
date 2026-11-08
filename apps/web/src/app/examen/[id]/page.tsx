@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Clock, Headphones, Lock, Maximize, Mic, Square } from 'lucide-react';
 import { EE_TASKS, EO_TASKS, type Skill } from '@c2pass/shared';
 import { Logo } from '@/components/logo';
-import { Choices, WritingEditor } from '@/components/exercise';
+import { Choices, MicProblemNotice, WritingEditor } from '@/components/exercise';
 import { ListenButton, useAudioPlayback } from '@/components/listen-button';
 import { RequireAuth } from '@/components/require-auth';
 import { Badge, Button, Card, cx, ErrorNotice, Notice, Spinner } from '@/components/ui';
@@ -13,7 +13,7 @@ import { api, ApiError } from '@/lib/api';
 import { fingerprint } from '@/lib/fingerprint';
 import { clock, SKILL_META } from '@/lib/format';
 import { useAction } from '@/lib/hooks';
-import { extensionFor, useRecorder } from '@/lib/recorder';
+import { canRecord, extensionFor, MIC_MESSAGES, problemOf, sendWithRetry, useRecorder, type MicProblem } from '@/lib/recorder';
 import type { ExamQuestion, ExamState } from '@/lib/types';
 
 type Current = NonNullable<ExamState['current']>;
@@ -129,16 +129,17 @@ function ExamRunner() {
 function Intro({ state, onStarted }: { state: ExamState; onStarted: (s: ExamState) => void }) {
   const router = useRouter();
   const action = useAction();
-  const [mic, setMic] = useState<'unknown' | 'ok' | 'denied'>('unknown');
+  const [mic, setMic] = useState<'unknown' | 'ok' | MicProblem>('unknown');
   const needsMic = state.sections.some((s) => s.skill === 'EO');
 
   async function testMic() {
     try {
+      if (!canRecord()) throw new Error('unsupported');
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       stream.getTracks().forEach((t) => t.stop());
       setMic('ok');
-    } catch {
-      setMic('denied');
+    } catch (e) {
+      setMic(problemOf(e));
     }
   }
 
@@ -172,7 +173,10 @@ function Intro({ state, onStarted }: { state: ExamState; onStarted: (s: ExamStat
           {needsMic && (
             <div className="mt-4 flex flex-wrap items-center gap-3 rounded-lg bg-navy-50 p-3 text-sm">
               <Mic className="h-4 w-4" /> Micro :
-              {mic === 'ok' ? <Badge tone="ok">Fonctionne</Badge> : mic === 'denied' ? <Badge tone="maple">Refusé</Badge> : <Button size="sm" variant="secondary" onClick={() => void testMic()}>Tester le micro</Button>}
+              {mic === 'ok' ? <Badge tone="ok">Fonctionne</Badge> : mic === 'unknown' ? <Button size="sm" variant="secondary" onClick={() => void testMic()}>Tester le micro</Button> : <Badge tone="maple">Indisponible</Badge>}
+              {mic !== 'ok' && mic !== 'unknown' && (
+                <p className="w-full text-muted">{MIC_MESSAGES[mic]} À défaut, vous pourrez envoyer un enregistrement fait avec votre téléphone.</p>
+              )}
             </div>
           )}
           <div className="mt-4"><ErrorNotice error={action.error} /></div>
@@ -482,7 +486,7 @@ function SpeakingTask({ sessionId, question: q, onDone }: { sessionId: string; q
     form.append('audio', blob, `eo-${q.id}.${extensionFor(blob.type)}`);
     form.append('questionId', q.id);
     form.append('duration', String(seconds));
-    const ok = await action.run(() => api.post(`/simulator/sessions/${sessionId}/audio`, form));
+    const ok = await action.run(() => sendWithRetry(() => api.post(`/simulator/sessions/${sessionId}/audio`, form)));
     if (ok) onDone();
   }, [q.id, sessionId, action, onDone]);
 
@@ -506,7 +510,7 @@ function SpeakingTask({ sessionId, question: q, onDone }: { sessionId: string; q
       <p className="mt-2 whitespace-pre-line text-lg font-semibold text-navy-900">{q.statement}</p>
       {q.context && <p className="mt-2 whitespace-pre-line text-sm text-muted">{q.context}</p>}
       <div className="mt-6 rounded-xl bg-navy-50 p-5">
-        {rec.state === 'denied' && <div className="mb-3"><Notice tone="error">Accès au micro refusé : autorisez-le dans le navigateur puis relancez.</Notice></div>}
+        {rec.state === 'denied' && rec.problem && <MicProblemNotice problem={rec.problem} maxSeconds={task.seconds} onRetry={() => { setPhase('recording'); void rec.start(); }} onFile={(f) => void rec.takeFile(f)} />}
         {phase === 'ready' && (
           <Button size="lg" onClick={() => { if (task.prepSeconds) setPhase('prep'); else { setPhase('recording'); void rec.start(); } }}>
             <Mic className="h-5 w-5" />{task.prepSeconds ? 'Commencer la préparation' : 'Commencer à parler'}

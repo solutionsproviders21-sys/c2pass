@@ -38,6 +38,50 @@ export class LanguageToolClient {
   }
 }
 
+/** One topic found by TextRazor, from its Wikipedia-based topic graph (score 0–1). */
+export interface Topic {
+  label: string;
+  score: number;
+}
+
+/**
+ * TextRazor (cahier des charges p. 10, 15): semantic analysis. Used to check that an answer deals with the subject:
+ * the topics of the answer are compared with those of the prompt.
+ */
+export class TextRazorClient {
+  constructor(private readonly apiKey: string | undefined, private readonly baseUrl = 'https://api.textrazor.com') {}
+
+  get enabled() {
+    return !!this.apiKey;
+  }
+
+  async topics(text: string): Promise<Topic[]> {
+    if (!this.apiKey) return [];
+    const res = await fetch(`${this.baseUrl}/`, {
+      method: 'POST',
+      headers: { 'x-textrazor-key': this.apiKey, 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+      body: new URLSearchParams({ text: text.slice(0, 20_000), extractors: 'topics', languageOverride: 'fre' }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) throw new Error(`TextRazor failed (${res.status})`);
+    const body = (await res.json()) as { ok?: boolean; error?: string; response?: { topics?: { label: string; score: number }[] } };
+    if (body.ok === false) throw new Error(`TextRazor failed (${body.error ?? 'unknown error'})`);
+    return (body.response?.topics ?? []).map((t) => ({ label: t.label, score: t.score })).sort((a, b) => b.score - a.score);
+  }
+}
+
+/**
+ * Share of the prompt's main topics (score ≥ 0.5, at most 8) that the answer also treats (score ≥ 0.3), or null when
+ * the prompt yields too few topics to judge.
+ */
+export function topicCoverage(prompt: Topic[], answer: Topic[]) {
+  const main = prompt.filter((t) => t.score >= 0.5).slice(0, 8);
+  if (main.length < 2) return null;
+  const treated = new Set(answer.filter((t) => t.score >= 0.3).map((t) => t.label.toLowerCase()));
+  const shared = main.filter((t) => treated.has(t.label.toLowerCase()));
+  return { ratio: shared.length / main.length, shared: shared.map((t) => t.label), missing: main.filter((t) => !shared.includes(t)).map((t) => t.label) };
+}
+
 export interface LlmAssessment {
   score: number;
   cefr: string;

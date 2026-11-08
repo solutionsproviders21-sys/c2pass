@@ -13,7 +13,7 @@ import { api, fetchRaw } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useAction } from '@/lib/hooks';
 import { SKILL_META } from '@/lib/format';
-import { extensionFor } from '@/lib/recorder';
+import { extensionFor, sendWithRetry } from '@/lib/recorder';
 import type { AnswerResult, PublicQuestion, SpeakingResult, WritingResult } from '@/lib/types';
 
 function Practice() {
@@ -226,7 +226,7 @@ function SpeakingExercise({ question: q, onNext }: { question: PublicQuestion; o
     form.append('questionId', q.id);
     form.append('duration', String(seconds));
     form.append('humanReview', String(human));
-    const r = await action.run(() => api.post<SpeakingResult>('/training/speaking', form));
+    const r = await action.run(() => sendWithRetry(() => api.post<SpeakingResult>('/training/speaking', form)));
     if (r) setSubmitted(r);
   }
 

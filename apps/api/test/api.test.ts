@@ -159,6 +159,39 @@ describe('training mode', () => {
     expect(r.body.feedback.strengths.length).toBeGreaterThan(0);
     expect(r.body.metrics.advancedConnectors).toEqual(expect.arrayContaining(['nonobstant', 'par voie de conséquence']));
   });
+
+  it('flags a writing that leaves the subject aside (TextRazor) and lowers its mark', async () => {
+    const { EvaluationService } = await import('../src/modules/evaluation/evaluation.service.js');
+    const { TextRazorClient } = await import('../src/modules/evaluation/providers.js');
+    const svc = ctx.app.get(EvaluationService) as unknown as { textRazor: unknown };
+    const saved = svc.textRazor;
+    svc.textRazor = new TextRazorClient('key');
+    const topic = (label: string, score: number) => ({ label, score });
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
+      const text = new URLSearchParams(String(init?.body)).get('text') ?? '';
+      const topics = text.includes('football')
+        ? [topic('Football', 1), topic('Sport', 0.9)]
+        : [topic('Télétravail', 1), topic('Entreprise', 0.9), topic('Lien social', 0.8)];
+      return new Response(JSON.stringify({ ok: true, response: { topics } }));
+    });
+    try {
+      const s = await newStudent(ctx);
+      await setPlan(ctx, s.id, 'standard');
+      const essay = (subject: string) => `Le ${subject} constitue certes une avancée ; nonobstant, il n'en demeure pas moins qu'il fragilise certains équilibres.
+        Bien que les outils numériques permettent des échanges constants, ils ne sauraient remplacer les rencontres fortuites, lesquelles nourrissent la confiance.
+        Par voie de conséquence, il est indispensable que chacun repense ses habitudes afin que tous conservent un sentiment d'appartenance.
+        En définitive, ce n'est ni une menace ni une panacée : tout dépend de la manière dont il est organisé et accompagné.`;
+      const on = (await ctx.http.post('/api/training/writing').set(auth(s.token)).send({ questionId: 'EE-S1-T3', text: essay('télétravail') })).body;
+      const off = (await ctx.http.post('/api/training/writing').set(auth(s.token)).send({ questionId: 'EE-S1-T3', text: essay('football') })).body;
+      expect(on.feedback.engine).toContain('textrazor');
+      expect(on.feedback.strengths.join(' ')).toContain('traite bien le sujet');
+      expect(off.feedback.improvements[0]).toMatch(/s’éloigne du sujet/);
+      expect(off.score).toBeLessThanOrEqual(on.score - 3);
+    } finally {
+      fetchMock.mockRestore();
+      svc.textRazor = saved;
+    }
+  });
 });
 
 describe('exam simulator', () => {

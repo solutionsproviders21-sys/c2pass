@@ -33,6 +33,7 @@ const schema = z.object({
   OPENAI_TRANSCRIBE_MODEL: z.string().default('whisper-1'),
   LANGUAGETOOL_URL: optional,
   TEXTRAZOR_API_KEY: optional,
+  TEXTRAZOR_URL: z.string().default('https://api.textrazor.com'),
 
   GOOGLE_CLIENT_ID: optional,
   GOOGLE_CLIENT_SECRET: optional,
