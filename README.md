@@ -65,6 +65,7 @@ Les moyens de paiement sont Orange Money (Web Payment), MTN MoMo (Collection), C
 - **Remboursements** : depuis son profil, l’élève demande le remboursement d’un paiement sous 7 jours s’il n’a pas utilisé l’offre (ni simulation, ni correction humaine). La **garantie C2** du Pack Réussite se demande entre 3 et 9 mois après l’achat, après au moins 3 simulations complètes, avec l’attestation officielle du TCF en pièce jointe. L’administrateur accepte ou refuse chaque demande (page *Paiements & remboursements*), et peut aussi rembourser directement. Un paiement remboursé rend l’offre gratuite. Le remboursement d’argent lui-même se fait chez le prestataire (Orange Money, MTN, Stripe).
 - **Rappel de renouvellement** : un e-mail part 3 jours avant la fin d’une offre, une seule fois par échéance.
 - **Journal d’audit** : créations de compte, sécurité (double authentification, mots de passe, jeton volé), accès au coffre-fort, offres activées, remboursements, export et effacement RGPD, et actions des administrateurs, consultables et filtrables dans le back-office.
+- **Bêta privée et liste d’attente** : la page d’accueil recueille les adresses intéressées. Avec `SIGNUP_MODE=invite` (dans `ops/site.env`), un compte ne se crée qu’avec un code d’invitation. Le back-office (*Bêta & liste d’attente*) envoie un code personnel aux adresses choisies de la liste, ou crée des codes à plusieurs places pour un groupe (école, partenaire), et suit leur utilisation.
 
 ## Sécurité et RGPD
 

@@ -7,7 +7,7 @@ import { PublicFooter, PublicHeader } from '@/components/public-header';
 import { MapleLeaf } from '@/components/logo';
 import { Button, Card, ErrorNotice, Input, LinkButton, Notice, Select } from '@/components/ui';
 import { api } from '@/lib/api';
-import { useAction } from '@/lib/hooks';
+import { useAction, useLoad } from '@/lib/hooks';
 import { money } from '@/lib/format';
 
 const SKILLS = [
@@ -22,6 +22,7 @@ export default function Landing() {
   const [country, setCountry] = useState('CM');
   const [done, setDone] = useState(false);
   const lead = useAction();
+  const beta = !!useLoad(() => api.get<{ inviteOnly: boolean }>('/auth/signup')).data?.inviteOnly;
 
   return (
     <>
@@ -112,12 +113,12 @@ export default function Landing() {
           <p className="mt-4 text-sm text-muted">Paiement par Orange Money, MTN Mobile Money, CinetPay ou carte bancaire.</p>
         </section>
 
-        <section className="bg-navy-50">
+        <section id="liste-attente" className="bg-navy-50">
           <div className="mx-auto max-w-3xl px-4 py-16 text-center">
-            <h2 className="h-serif text-3xl font-bold text-navy-900">Recevez nos conseils et les dates des prochaines sessions</h2>
-            <p className="mt-2 text-muted">Une lettre courte, deux fois par mois. Désinscription en un clic.</p>
+            <h2 className="h-serif text-3xl font-bold text-navy-900">{beta ? 'Rejoignez la liste d’attente de la bêta privée' : 'Recevez nos conseils et les dates des prochaines sessions'}</h2>
+            <p className="mt-2 text-muted">{beta ? 'Les places de la bêta sont limitées : nous vous envoyons votre code d’invitation par e-mail dès qu’une place se libère.' : 'Une lettre courte, deux fois par mois. Désinscription en un clic.'}</p>
             {done ? (
-              <div className="mx-auto mt-6 max-w-md"><Notice tone="ok" title="Merci !">Vous recevrez nos prochaines informations.</Notice></div>
+              <div className="mx-auto mt-6 max-w-md"><Notice tone="ok" title="Merci !">{beta ? 'Vous êtes sur la liste d’attente. Votre invitation arrivera par e-mail.' : 'Vous recevrez nos prochaines informations.'}</Notice></div>
             ) : (
               <form
                 className="mx-auto mt-6 flex max-w-xl flex-col gap-2 sm:flex-row"
@@ -131,7 +132,7 @@ export default function Landing() {
                 <Select value={country} onChange={(e) => setCountry(e.target.value)} className="sm:w-48">
                   {COUNTRIES.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
                 </Select>
-                <Button busy={lead.busy} type="submit">Je m’inscris</Button>
+                <Button busy={lead.busy} type="submit">{beta ? 'Rejoindre la liste' : 'Je m’inscris'}</Button>
               </form>
             )}
             <div className="mx-auto mt-3 max-w-xl"><ErrorNotice error={lead.error} /></div>

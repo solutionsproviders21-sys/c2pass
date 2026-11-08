@@ -17,6 +17,7 @@ const OAUTH_ERRORS: Record<string, string> = {
   oauth_state: 'La connexion a expiré, veuillez réessayer.',
   oauth_failed: 'La connexion avec ce compte a échoué.',
   account_suspended: 'Ce compte est suspendu.',
+  invite_required: 'Pendant la bêta privée, créez d’abord votre compte avec votre code d’invitation (page Inscription). Vous pourrez ensuite vous connecter avec Google ou Facebook.',
 };
 
 function LoginForm() {

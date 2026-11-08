@@ -53,6 +53,8 @@ const schema = z.object({
   VAPID_PRIVATE_KEY: optional,
   VAPID_SUBJECT: z.string().default('mailto:alertes@c2pass.cm'),
 
+  // invite = private beta: new accounts need an invitation code (created and sent from the back-office).
+  SIGNUP_MODE: z.enum(['open', 'invite']).default('open'),
   PAYMENTS_MODE: z.enum(['sandbox', 'live']).default('sandbox'),
   /** In production, sandbox payments (plans activated without paying) need this explicit opt-in. Demo servers only. */
   ALLOW_SANDBOX_PAYMENTS: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),

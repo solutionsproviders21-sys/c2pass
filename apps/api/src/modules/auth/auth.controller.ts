@@ -25,6 +25,7 @@ const registerSchema = z.object({
   acceptTerms: z.literal(true, { error: 'Vous devez accepter les conditions et la politique de confidentialité' }),
   marketingConsent: z.boolean().optional(),
   fingerprint: z.string().max(128).optional(),
+  inviteCode: z.string().trim().max(40).optional(),
 });
 
 @Controller('auth')
@@ -36,6 +37,13 @@ export class AuthController {
     @Inject(CONFIG) private readonly config: Config,
   ) {
     this.oauth = new OAuthClient(config);
+  }
+
+  /** Whether new accounts need an invitation code (private beta). */
+  @Public()
+  @Get('signup')
+  signup() {
+    return { inviteOnly: this.config.SIGNUP_MODE === 'invite' };
   }
 
   @Public()

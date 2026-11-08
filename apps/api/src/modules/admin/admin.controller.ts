@@ -275,7 +275,11 @@ export class LeadsController {
   @HttpCode(201)
   async create(@Body() body: unknown) {
     const b = z.object({ email: z.email(), country: z.string().max(2).optional(), source: z.string().max(40).optional() }).parse(body);
-    await this.pool.query('INSERT INTO leads (email, country, source) VALUES ($1, $2, $3)', [b.email.toLowerCase(), b.country ?? null, b.source ?? 'landing']);
+    // Signing up twice is harmless: the address is kept once.
+    await this.pool.query(
+      `INSERT INTO leads (email, country, source) SELECT $1, $2, $3 WHERE NOT EXISTS (SELECT 1 FROM leads WHERE lower(email) = $1)`,
+      [b.email.toLowerCase(), b.country ?? null, b.source ?? 'landing'],
+    );
     return { ok: true };
   }
 }

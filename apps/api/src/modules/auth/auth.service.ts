@@ -36,6 +36,7 @@ export interface RegisterInput {
   city?: string;
   phone?: string;
   marketingConsent?: boolean;
+  inviteCode?: string;
 }
 
 export interface Fingerprint {
@@ -59,16 +60,17 @@ export class AuthService {
     return withTransaction(this.pool, async (tx) => {
       const { rows: [existing] } = await tx.query(`SELECT 1 FROM users WHERE lower(email) = lower($1) AND status <> 'deleted'`, [input.email]);
       if (existing) throw conflict('email_taken', 'Un compte existe déjà avec cet e-mail');
+      const invite = await this.redeemInvite(tx, input.inviteCode);
       const { rows: [user] } = await tx.query<{ id: string; role: Role }>(
-        `INSERT INTO users (email, password_hash) VALUES ($1, $2) RETURNING id, role`,
-        [input.email.trim().toLowerCase(), hash],
+        `INSERT INTO users (email, password_hash, invite_code) VALUES ($1, $2, $3) RETURNING id, role`,
+        [input.email.trim().toLowerCase(), hash, invite],
       );
       await tx.query(
         `INSERT INTO profiles (user_id, first_name, last_name, country, city, phone, whatsapp, terms_accepted_at, marketing_consent)
          VALUES ($1, $2, $3, $4, $5, $6, $6, now(), $7)`,
         [user.id, input.firstName, input.lastName, input.country ?? null, input.city ?? null, input.phone ?? null, input.marketingConsent ?? false],
       );
-      await audit(tx, { userId: user.id, actorId: user.id, action: 'account.created', meta: { method: 'email', consent: { terms: true, marketing: !!input.marketingConsent } }, ip: fp.ip });
+      await audit(tx, { userId: user.id, actorId: user.id, action: 'account.created', meta: { method: 'email', invite, consent: { terms: true, marketing: !!input.marketingConsent } }, ip: fp.ip });
       await this.recordSignal(tx, user.id, fp, 'register');
       return { userId: user.id, tokens: await this.issueTokens(tx, user.id, user.role) };
     }).then(async ({ userId, tokens }) => {
@@ -280,6 +282,8 @@ export class AuthService {
         }
       }
       if (!user) {
+        // Private beta: invitees create their account with their code first, then may link Google or Facebook.
+        if (this.config.SIGNUP_MODE === 'invite') throw new AppError(403, 'invite_required', 'Les inscriptions se font sur invitation pendant la bêta');
         ({ rows: [user] } = await tx.query(`INSERT INTO users (email, ${column}, email_verified_at) VALUES ($1, $2, now()) RETURNING id, role, status`, [identity.email.toLowerCase(), identity.id]));
         await tx.query(`INSERT INTO profiles (user_id, first_name, last_name, terms_accepted_at) VALUES ($1, $2, $3, now())`, [user.id, identity.firstName, identity.lastName]);
         await audit(tx, { userId: user.id, actorId: user.id, action: 'account.created', meta: { method: provider } });
@@ -290,6 +294,26 @@ export class AuthService {
       await this.recordSignal(tx, user.id, fp, `login_${provider}`);
       return this.issueTokens(tx, user.id, user.role);
     });
+  }
+
+  /**
+   * Uses one seat of an invitation code. In invite mode a valid code is required; in open mode a valid code is still
+   * recorded (to follow the beta cohort) and an invalid one is ignored.
+   */
+  private async redeemInvite(tx: pg.PoolClient, code: string | undefined): Promise<string | null> {
+    const required = this.config.SIGNUP_MODE === 'invite';
+    const { rows: [invite] } = code ? await tx.query<{ code: string }>(
+      `UPDATE invites SET uses = uses + 1
+        WHERE code = upper($1) AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > now()) AND uses < max_uses
+        RETURNING code`,
+      [code.trim()],
+    ) : { rows: [] };
+    if (!invite && required) {
+      throw new AppError(403, code ? 'invite_invalid' : 'invite_required', code
+        ? 'Ce code d’invitation n’est pas valable (déjà utilisé, expiré ou mal saisi).'
+        : 'Les inscriptions se font sur invitation pendant la bêta : saisissez votre code d’invitation.');
+    }
+    return invite?.code ?? null;
   }
 
   async createChallenge(userId: string | null, payload: object, kind: 'totp' | 'oauth_state' = 'totp', ttlMinutes = 10): Promise<string> {

@@ -1,29 +1,32 @@
 'use client';
 
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { Suspense, useState } from 'react';
 import { COUNTRIES } from '@c2pass/shared';
 import { AuthFooter, AuthLayout, OAuthButtons } from '@/components/auth-card';
-import { Button, ErrorNotice, Field, Input, Select } from '@/components/ui';
+import { Button, ErrorNotice, Field, Input, Notice, Select } from '@/components/ui';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { fingerprint } from '@/lib/fingerprint';
-import { useAction } from '@/lib/hooks';
+import { useAction, useLoad } from '@/lib/hooks';
 import type { Tokens } from '@/lib/types';
 
-export default function Register() {
+function Register() {
   const router = useRouter();
+  const invitation = useSearchParams().get('invitation') ?? '';
+  const mode = useLoad(() => api.get<{ inviteOnly: boolean }>('/auth/signup'));
+  const inviteOnly = !!mode.data?.inviteOnly;
   const { signIn } = useAuth();
   const action = useAction();
-  const [f, setF] = useState({ firstName: '', lastName: '', email: '', password: '', country: 'CM', city: '', phone: '', acceptTerms: false, marketingConsent: false });
+  const [f, setF] = useState({ inviteCode: invitation, firstName: '', lastName: '', email: '', password: '', country: 'CM', city: '', phone: '', acceptTerms: false, marketingConsent: false });
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     setF({ ...f, [k]: e.target.type === 'checkbox' ? (e.target as HTMLInputElement).checked : e.target.value });
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     const tokens = await action.run(async () => api.post<Tokens>('/auth/register', {
-      ...f, city: f.city || undefined, phone: f.phone.trim() || undefined, fingerprint: await fingerprint(),
+      ...f, inviteCode: f.inviteCode.trim() || undefined, city: f.city || undefined, phone: f.phone.trim() || undefined, fingerprint: await fingerprint(),
     }));
     if (tokens) {
       await signIn(tokens);
@@ -33,8 +36,14 @@ export default function Register() {
 
   return (
     <AuthLayout title="Créez votre compte" subtitle="Gratuit, sans carte bancaire. 5 exercices par jour et 1 simulation par mois.">
-      <OAuthButtons />
+      {inviteOnly && !invitation && (
+        <div className="mb-4"><Notice tone="info" title="Bêta privée">Les inscriptions se font sur invitation. Pas encore de code ? <Link href="/#liste-attente" className="underline">Rejoignez la liste d’attente</Link>.</Notice></div>
+      )}
+      {!inviteOnly && <OAuthButtons />}
       <form onSubmit={submit} className="space-y-4">
+        {(inviteOnly || invitation) && (
+          <Field label="Code d’invitation"><Input required={inviteOnly} value={f.inviteCode} onChange={set('inviteCode')} placeholder="C2P-XXXX-XXXX" className="font-mono uppercase" /></Field>
+        )}
         <div className="grid grid-cols-2 gap-3">
           <Field label="Prénom"><Input required autoComplete="given-name" value={f.firstName} onChange={set('firstName')} /></Field>
           <Field label="Nom"><Input required autoComplete="family-name" value={f.lastName} onChange={set('lastName')} /></Field>
@@ -62,4 +71,8 @@ export default function Register() {
       <AuthFooter>Déjà inscrit ? <Link href="/connexion" className="font-semibold text-maple-600">Se connecter</Link></AuthFooter>
     </AuthLayout>
   );
+}
+
+export default function RegisterPage() {
+  return <Suspense><Register /></Suspense>;
 }

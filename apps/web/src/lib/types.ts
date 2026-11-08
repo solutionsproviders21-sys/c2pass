@@ -155,3 +155,12 @@ export interface AdminRefund {
   hasAttestation: boolean; email: string; paymentId: string; planId: PlanId; amount: number; method: Payment['method']; paidAt: string | null;
 }
 export interface AuditEntry { id: string; action: string; meta: Record<string, unknown>; createdAt: string; ip: string | null; userEmail: string | null; actorEmail: string | null }
+
+export interface Invite {
+  code: string; note: string | null; maxUses: number; uses: number; email: string | null;
+  expiresAt: string | null; revokedAt: string | null; createdAt: string; createdBy: string | null;
+}
+
+export interface Lead {
+  id: string; email: string; country: string | null; source: string | null; createdAt: string; invitedAt: string | null; registered: boolean;
+}

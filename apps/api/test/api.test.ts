@@ -442,6 +442,74 @@ describe('refunds and renewal reminders', () => {
   });
 });
 
+describe('private beta and waitlist', () => {
+  const register = (email: string, inviteCode?: string) => ctx.http.post('/api/auth/register').send({
+    email, password: 'Motdepasse-solide-1', firstName: 'Bêta', lastName: 'Testeur', acceptTerms: true, inviteCode,
+  });
+
+  it('requires an invitation code in invite mode and counts its uses', async () => {
+    const admin = await adminToken(ctx);
+    const codes = (await ctx.http.post('/api/admin/invites').set(auth(admin)).send({ count: 2, maxUses: 2, note: 'Lycée Leclerc' })).body as string[];
+    expect(codes).toHaveLength(2);
+    expect(codes[0]).toMatch(/^C2P-[A-Z2-9]{4}-[A-Z2-9]{4}$/);
+    ctx.config.SIGNUP_MODE = 'invite';
+    try {
+      expect((await ctx.http.get('/api/auth/signup')).body).toEqual({ inviteOnly: true });
+      const stamp = Date.now();
+      expect((await register(`sans${stamp}@test.cm`)).body.error.code).toBe('invite_required');
+      expect((await register(`faux${stamp}@test.cm`, 'C2P-AAAA-AAAA')).body.error.code).toBe('invite_invalid');
+      // Codes are not case-sensitive; a code with 2 seats lets exactly 2 people in.
+      expect((await register(`un${stamp}@test.cm`, codes[0].toLowerCase())).status).toBe(201);
+      expect((await register(`deux${stamp}@test.cm`, codes[0])).status).toBe(201);
+      expect((await register(`trois${stamp}@test.cm`, codes[0])).body.error.code).toBe('invite_invalid');
+      await ctx.http.post(`/api/admin/invites/${codes[1]}/revoke`).set(auth(admin)).expect(201);
+      expect((await register(`quatre${stamp}@test.cm`, codes[1])).body.error.code).toBe('invite_invalid');
+      const { rows } = await ctx.pool.query('SELECT invite_code FROM users WHERE email = $1', [`un${stamp}@test.cm`]);
+      expect(rows[0].invite_code).toBe(codes[0]);
+      const listed = (await ctx.http.get('/api/admin/invites').set(auth(admin))).body.find((i: { code: string }) => i.code === codes[0]);
+      expect(listed).toMatchObject({ uses: 2, maxUses: 2, note: 'Lycée Leclerc' });
+    } finally {
+      ctx.config.SIGNUP_MODE = 'open';
+    }
+    expect((await ctx.http.get('/api/auth/signup')).body).toEqual({ inviteOnly: false });
+  });
+
+  it('invites waitlist addresses by e-mail, once, and erases one on request', async () => {
+    const admin = await adminToken(ctx);
+    const email = `attente${Date.now()}@test.cm`;
+    await ctx.http.post('/api/leads').send({ email, country: 'CM' }).expect(201);
+    await ctx.http.post('/api/leads').send({ email: email.toUpperCase(), country: 'CM' }).expect(201);
+    const lead = (await ctx.http.get(`/api/admin/leads?q=${email}`).set(auth(admin))).body;
+    expect(lead).toHaveLength(1);
+    expect(lead[0]).toMatchObject({ email, invitedAt: null, registered: false });
+
+    ctx.notifier.sent.length = 0;
+    expect((await ctx.http.post('/api/admin/leads/invite').set(auth(admin)).send({ ids: [lead[0].id] })).body).toEqual({ sent: 1, skipped: 0 });
+    const mail = ctx.notifier.sent.find((m) => m.to === email);
+    const code = /invitation=([A-Z0-9-]+)/.exec(mail?.text ?? '')?.[1];
+    expect(code).toMatch(/^C2P-/);
+    // Already invited: not sent twice.
+    expect((await ctx.http.post('/api/admin/leads/invite').set(auth(admin)).send({ ids: [lead[0].id] })).body).toEqual({ sent: 0, skipped: 1 });
+
+    ctx.config.SIGNUP_MODE = 'invite';
+    try {
+      expect((await register(email, code)).status).toBe(201);
+    } finally {
+      ctx.config.SIGNUP_MODE = 'open';
+    }
+    expect((await ctx.http.get(`/api/admin/leads?q=${email}`).set(auth(admin))).body[0]).toMatchObject({ registered: true });
+
+    const other = `effacer${Date.now()}@test.cm`;
+    await ctx.http.post('/api/leads').send({ email: other }).expect(201);
+    const [row] = (await ctx.http.get(`/api/admin/leads?q=${other}`).set(auth(admin))).body;
+    await ctx.http.delete(`/api/admin/leads/${row.id}`).set(auth(admin)).expect(200);
+    expect((await ctx.http.get(`/api/admin/leads?q=${other}`).set(auth(admin))).body).toHaveLength(0);
+    // Students cannot see the waitlist.
+    const s = await newStudent(ctx);
+    expect((await ctx.http.get('/api/admin/leads').set(auth(s.token))).status).toBe(403);
+  });
+});
+
 describe('centres and real-time alerts', () => {
   it('lists centres publicly and keeps alerts for paying plans', async () => {
     const list = await ctx.http.get('/api/centres?country=CM');
